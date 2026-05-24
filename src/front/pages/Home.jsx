@@ -1,52 +1,104 @@
-import React, { useEffect } from "react"
-import rigoImageUrl from "../assets/img/rigo-baby.jpg";
-import useGlobalReducer from "../hooks/useGlobalReducer.jsx";
+import { Link } from "react-router-dom";
 
 export const Home = () => {
+  return (
+    <div>
+      <section className="bg-light py-5">
+        <div className="container text-center">
+          <h1 className="display-4 fw-bold">
+            Gestiona tu club de pádel fácilmente
+          </h1>
 
-	const { store, dispatch } = useGlobalReducer()
+          <p className="lead mt-3">
+            Reserva pistas, organiza torneos, consulta rankings y reserva clases
+            desde una sola plataforma.
+          </p>
 
-	const loadMessage = async () => {
-		try {
-			const backendUrl = import.meta.env.VITE_BACKEND_URL
+          <div className="d-flex justify-content-center gap-3 mt-4 flex-wrap">
+            <Link to="/courts" className="btn btn-success btn-lg">
+              Reservar pista
+            </Link>
 
-			if (!backendUrl) throw new Error("VITE_BACKEND_URL is not defined in .env file")
+            <Link to="/classes" className="btn btn-outline-success btn-lg">
+              Reservar clase
+            </Link>
+          </div>
+        </div>
+      </section>
 
-			const response = await fetch(backendUrl + "/api/hello")
-			const data = await response.json()
+      <section className="container my-5">
+        <h2 className="text-center mb-4">¿Qué puedes hacer?</h2>
 
-			if (response.ok) dispatch({ type: "set_hello", payload: data.message })
+        <div className="row g-4">
+          <div className="col-md-3">
+            <div className="card h-100 shadow-sm">
+              <div className="card-body text-center">
+                <h5 className="card-title">Reservar pista</h5>
+                <p className="card-text">
+                  Elige día, hora y pista disponible para jugar.
+                </p>
+                <Link to="/courts" className="btn btn-success btn-sm">
+                  Ver pistas
+                </Link>
+              </div>
+            </div>
+          </div>
 
-			return data
+          <div className="col-md-3">
+            <div className="card h-100 shadow-sm">
+              <div className="card-body text-center">
+                <h5 className="card-title">Clases</h5>
+                <p className="card-text">
+                  Reserva clases particulares o grupales con entrenadores.
+                </p>
+                <Link to="/classes" className="btn btn-success btn-sm">
+                  Ver clases
+                </Link>
+              </div>
+            </div>
+          </div>
 
-		} catch (error) {
-			if (error.message) throw new Error(
-				`Could not fetch the message from the backend.
-				Please check if the backend is running and the backend port is public.`
-			);
-		}
+          <div className="col-md-3">
+            <div className="card h-100 shadow-sm">
+              <div className="card-body text-center">
+                <h5 className="card-title">Torneos</h5>
+                <p className="card-text">
+                  Apúntate a torneos americanos, ligas o eliminatorias.
+                </p>
+                <Link to="/tournaments" className="btn btn-success btn-sm">
+                  Ver torneos
+                </Link>
+              </div>
+            </div>
+          </div>
 
-	}
+          <div className="col-md-3">
+            <div className="card h-100 shadow-sm">
+              <div className="card-body text-center">
+                <h5 className="card-title">Ranking</h5>
+                <p className="card-text">
+                  Consulta la clasificación de jugadores por puntos.
+                </p>
+                <Link to="/ranking" className="btn btn-success btn-sm">
+                  Ver ranking
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-	useEffect(() => {
-		loadMessage()
-	}, [])
-
-	return (
-		<div className="text-center mt-5">
-			<h1 className="display-4">Hello Rigo!!</h1>
-			<p className="lead">
-				<img src={rigoImageUrl} className="img-fluid rounded-circle mb-3" alt="Rigo Baby" />
-			</p>
-			<div className="alert alert-info">
-				{store.message ? (
-					<span>{store.message}</span>
-				) : (
-					<span className="text-danger">
-						Loading message from the backend (make sure your python 🐍 backend is running)...
-					</span>
-				)}
-			</div>
-		</div>
-	);
-}; 
+      <section className="container my-5">
+        <div className="bg-success text-white rounded p-5 text-center">
+          <h2>Próximo torneo americano</h2>
+          <p className="mb-3">
+            Viernes 24 de mayo · Nivel intermedio · 16 jugadores
+          </p>
+          <Link to="/tournaments" className="btn btn-light">
+            Inscribirme
+          </Link>
+        </div>
+      </section>
+    </div>
+  );
+};
