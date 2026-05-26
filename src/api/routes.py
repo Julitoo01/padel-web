@@ -50,6 +50,8 @@ def time_ranges_overlap(start_a, end_a, start_b, end_b):
 @api.route("/hello", methods=["GET"])
 def handle_hello():
     return jsonify({"message": "Padel Web API running"}), 200
+
+
 # -------------------------
 # AUTH
 # -------------------------
@@ -90,6 +92,17 @@ def register():
     )
 
     db.session.add(user)
+    db.session.commit()
+
+    ranking_player = Ranking(
+        user_id=user.id,
+        points=0,
+        matches_played=0,
+        wins=0,
+        losses=0,
+    )
+
+    db.session.add(ranking_player)
     db.session.commit()
 
     access_token = create_access_token(identity=str(user.id))
@@ -186,6 +199,17 @@ def create_user():
     db.session.add(user)
     db.session.commit()
 
+    ranking_player = Ranking(
+        user_id=user.id,
+        points=0,
+        matches_played=0,
+        wins=0,
+        losses=0,
+    )
+
+    db.session.add(ranking_player)
+    db.session.commit()
+
     return jsonify(user.serialize()), 201
 
 
@@ -202,7 +226,10 @@ def update_user(user_id):
         return jsonify({"error": "Missing JSON body"}), 400
 
     user.email = data.get("email", user.email)
-    user.password = data.get("password", user.password)
+
+    if data.get("password"):
+        user.password = generate_password_hash(data.get("password"))
+
     user.name = data.get("name", user.name)
     user.role = data.get("role", user.role)
     user.level = data.get("level", user.level)
@@ -219,6 +246,11 @@ def delete_user(user_id):
 
     if user is None:
         return jsonify({"error": "User not found"}), 404
+
+    ranking_player = Ranking.query.filter_by(user_id=user_id).first()
+
+    if ranking_player:
+        db.session.delete(ranking_player)
 
     db.session.delete(user)
     db.session.commit()
@@ -864,3 +896,160 @@ def delete_ranking_player(ranking_id):
     db.session.commit()
 
     return jsonify({"message": "Ranking player deleted successfully"}), 200
+@api.route("/ranking/sync", methods=["POST"])
+def sync_ranking():
+    users = User.query.all()
+    created = 0
+
+    for user in users:
+        existing_ranking = Ranking.query.filter_by(user_id=user.id).first()
+
+        if not existing_ranking:
+            ranking_player = Ranking(
+                user_id=user.id,
+                points=0,
+                matches_played=0,
+                wins=0,
+                losses=0,
+            )
+
+            db.session.add(ranking_player)
+            created += 1
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Ranking synced successfully",
+        "created": created
+    }), 200
+# -------------------------
+# MATCH RESULTS
+# -------------------------
+
+@api.route("/matches/result", methods=["POST"])
+def upload_match_result():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    required_fields = [
+        "team1_drive_id",
+        "team1_left_id",
+        "team2_drive_id",
+        "team2_left_id",
+        "set1_team1",
+        "set1_team2",
+        "set2_team1",
+        "set2_team2",
+    ]
+
+    for field in required_fields:
+        if data.get(field) is None or data.get(field) == "":
+            return jsonify({"error": f"{field} is required"}), 400
+
+    team1_drive_id = int(data.get("team1_drive_id"))
+    team1_left_id = int(data.get("team1_left_id"))
+    team2_drive_id = int(data.get("team2_drive_id"))
+    team2_left_id = int(data.get("team2_left_id"))
+
+    player_ids = [
+        team1_drive_id,
+        team1_left_id,
+        team2_drive_id,
+        team2_left_id,
+    ]
+
+    if len(player_ids) != len(set(player_ids)):
+        return jsonify({"error": "No puedes repetir jugadores en el mismo partido"}), 400
+
+    players = User.query.filter(User.id.in_(player_ids)).all()
+
+    if len(players) != 4:
+        return jsonify({"error": "Alguno de los jugadores no existe"}), 404
+
+    set1_team1 = int(data.get("set1_team1"))
+    set1_team2 = int(data.get("set1_team2"))
+    set2_team1 = int(data.get("set2_team1"))
+    set2_team2 = int(data.get("set2_team2"))
+
+    team1_sets = 0
+    team2_sets = 0
+
+    if set1_team1 > set1_team2:
+        team1_sets += 1
+    elif set1_team2 > set1_team1:
+        team2_sets += 1
+    else:
+        return jsonify({"error": "Un set no puede acabar empatado"}), 400
+
+    if set2_team1 > set2_team2:
+        team1_sets += 1
+    elif set2_team2 > set2_team1:
+        team2_sets += 1
+    else:
+        return jsonify({"error": "Un set no puede acabar empatado"}), 400
+
+    # Si van 1-1 en sets, hace falta set 3
+    if team1_sets == 1 and team2_sets == 1:
+        if data.get("set3_team1") is None or data.get("set3_team1") == "":
+            return jsonify({"error": "Se necesita Set 3 porque cada equipo ganó un set"}), 400
+
+        if data.get("set3_team2") is None or data.get("set3_team2") == "":
+            return jsonify({"error": "Se necesita Set 3 porque cada equipo ganó un set"}), 400
+
+        set3_team1 = int(data.get("set3_team1"))
+        set3_team2 = int(data.get("set3_team2"))
+
+        if set3_team1 > set3_team2:
+            team1_sets += 1
+        elif set3_team2 > set3_team1:
+            team2_sets += 1
+        else:
+            return jsonify({"error": "Un set no puede acabar empatado"}), 400
+
+    if team1_sets > team2_sets:
+        winner_ids = [team1_drive_id, team1_left_id]
+        loser_ids = [team2_drive_id, team2_left_id]
+        winner_team = "Equipo 1"
+    else:
+        winner_ids = [team2_drive_id, team2_left_id]
+        loser_ids = [team1_drive_id, team1_left_id]
+        winner_team = "Equipo 2"
+
+    def get_or_create_ranking(user_id):
+        ranking_player = Ranking.query.filter_by(user_id=user_id).first()
+
+        if not ranking_player:
+            ranking_player = Ranking(
+                user_id=user_id,
+                points=0,
+                matches_played=0,
+                wins=0,
+                losses=0,
+            )
+            db.session.add(ranking_player)
+            db.session.flush()
+
+        return ranking_player
+
+    for user_id in winner_ids:
+        ranking_player = get_or_create_ranking(user_id)
+        ranking_player.points += 10
+        ranking_player.matches_played += 1
+        ranking_player.wins += 1
+
+    for user_id in loser_ids:
+        ranking_player = get_or_create_ranking(user_id)
+        ranking_player.points += 2
+        ranking_player.matches_played += 1
+        ranking_player.losses += 1
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Resultado subido correctamente",
+        "winner_team": winner_team,
+        "team1_sets": team1_sets,
+        "team2_sets": team2_sets,
+    }), 201
