@@ -1,21 +1,51 @@
 import { useEffect, useState } from "react";
 
+const getMonday = (date) => {
+  const copiedDate = new Date(date);
+  const day = copiedDate.getDay();
+  const diff = copiedDate.getDate() - day + (day === 0 ? -6 : 1);
+  copiedDate.setDate(diff);
+  return copiedDate;
+};
+
+const formatDate = (date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const getSpanishDayName = (dateString) => {
+  const date = new Date(`${dateString}T12:00:00`);
+
+  return date.toLocaleDateString("es-ES", {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+  });
+};
+
 export const Classes = () => {
   const [coaches, setCoaches] = useState([]);
   const [users, setUsers] = useState([]);
   const [selectedCoach, setSelectedCoach] = useState(null);
+  const [availability, setAvailability] = useState(null);
+
+  const [weekStart, setWeekStart] = useState(formatDate(getMonday(new Date())));
 
   const [formData, setFormData] = useState({
     user_id: "",
     date: "",
     start_time: "",
     end_time: "",
-    class_type: "",
+    class_type: "private",
     level: "",
     price: "",
   });
 
   const [loading, setLoading] = useState(true);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -55,13 +85,42 @@ export const Classes = () => {
     }
   };
 
+  const getAvailability = async (coachId, selectedWeekStart) => {
+    try {
+      setAvailabilityLoading(true);
+
+      const response = await fetch(
+        `${backendUrl}/api/coaches/${coachId}/availability?date=${selectedWeekStart}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Error al cargar disponibilidad");
+      }
+
+      const data = await response.json();
+      setAvailability(data);
+    } catch (error) {
+      console.error(error);
+      setError("No se pudo cargar la disponibilidad del profesor");
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  };
+
   useEffect(() => {
     getCoaches();
     getUsers();
   }, []);
 
+  useEffect(() => {
+    if (selectedCoach) {
+      getAvailability(selectedCoach.id, weekStart);
+    }
+  }, [selectedCoach, weekStart]);
+
   const openReservationForm = (coach) => {
     setSelectedCoach(coach);
+    setAvailability(null);
     setMessage("");
     setError("");
 
@@ -70,7 +129,7 @@ export const Classes = () => {
       date: "",
       start_time: "",
       end_time: "",
-      class_type: "",
+      class_type: "private",
       level: "",
       price: coach.price_private || "",
     });
@@ -78,7 +137,36 @@ export const Classes = () => {
 
   const closeReservationForm = () => {
     setSelectedCoach(null);
+    setAvailability(null);
     setMessage("");
+    setError("");
+  };
+
+  const goToPreviousWeek = () => {
+    const current = new Date(`${weekStart}T12:00:00`);
+    current.setDate(current.getDate() - 7);
+    setWeekStart(formatDate(current));
+  };
+
+  const goToNextWeek = () => {
+    const current = new Date(`${weekStart}T12:00:00`);
+    current.setDate(current.getDate() + 7);
+    setWeekStart(formatDate(current));
+  };
+
+  const handleSlotClick = (day, slot) => {
+    if (!slot.available) return;
+
+    setFormData({
+      ...formData,
+      date: day.date,
+      start_time: slot.start_time,
+      end_time: slot.end_time,
+    });
+
+    setMessage(
+      `Horario seleccionado: ${day.date} de ${slot.start_time} a ${slot.end_time}`
+    );
     setError("");
   };
 
@@ -139,17 +227,18 @@ export const Classes = () => {
       }
 
       setMessage("Clase reservada correctamente");
-      setSelectedCoach(null);
 
       setFormData({
         user_id: "",
         date: "",
         start_time: "",
         end_time: "",
-        class_type: "",
+        class_type: "private",
         level: "",
-        price: "",
+        price: selectedCoach.price_private || "",
       });
+
+      getAvailability(selectedCoach.id, weekStart);
     } catch (error) {
       console.error(error);
       setError(error.message || "No se pudo reservar la clase");
@@ -160,8 +249,14 @@ export const Classes = () => {
     <div className="container my-5">
       <h1 className="fw-bold mb-3">Reservar clase</h1>
       <p className="text-muted">
-        Elige un entrenador para reservar una clase de pádel.
+        Elige un entrenador y selecciona una hora disponible en el calendario
+        semanal.
       </p>
+
+      <div className="alert alert-info">
+        Horario habitual mostrado: de 16:00 a 00:00. También puedes solicitar
+        otro horario escribiéndolo manualmente en el formulario.
+      </div>
 
       {loading && <p>Cargando entrenadores...</p>}
 
@@ -203,7 +298,7 @@ export const Classes = () => {
                   disabled={!coach.is_active}
                   onClick={() => openReservationForm(coach)}
                 >
-                  Reservar clase
+                  Ver disponibilidad
                 </button>
               </div>
             </div>
@@ -214,13 +309,13 @@ export const Classes = () => {
       {selectedCoach && (
         <div className="card shadow-sm mt-5">
           <div className="card-body">
-            <div className="d-flex justify-content-between align-items-center mb-3">
+            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
               <div>
                 <h3 className="fw-bold mb-1">
-                  Reservar clase con {selectedCoach.name}
+                  Disponibilidad de {selectedCoach.name}
                 </h3>
                 <p className="text-muted mb-0">
-                  Completa los datos de la clase.
+                  Selecciona una hora libre o escribe otro horario manualmente.
                 </p>
               </div>
 
@@ -231,6 +326,70 @@ export const Classes = () => {
                 Cerrar
               </button>
             </div>
+
+            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+              <button
+                className="btn btn-outline-success btn-sm"
+                onClick={goToPreviousWeek}
+              >
+                Semana anterior
+              </button>
+
+              <strong>Semana del {weekStart}</strong>
+
+              <button
+                className="btn btn-outline-success btn-sm"
+                onClick={goToNextWeek}
+              >
+                Semana siguiente
+              </button>
+            </div>
+
+            {availabilityLoading && <p>Cargando disponibilidad...</p>}
+
+            {availability && (
+              <div className="table-responsive mb-4">
+                <table className="table table-bordered align-middle text-center">
+                  <thead className="table-success">
+                    <tr>
+                      {availability.days.map((day) => (
+                        <th key={day.date}>{getSpanishDayName(day.date)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    <tr>
+                      {availability.days.map((day) => (
+                        <td key={day.date} style={{ minWidth: "140px" }}>
+                          <div className="d-grid gap-2">
+                            {day.slots.map((slot) => (
+                              <button
+                                key={`${day.date}-${slot.start_time}`}
+                                type="button"
+                                className={
+                                  slot.available
+                                    ? "btn btn-outline-success btn-sm"
+                                    : "btn btn-outline-danger btn-sm"
+                                }
+                                disabled={!slot.available}
+                                onClick={() => handleSlotClick(day, slot)}
+                              >
+                                {slot.start_time} - {slot.end_time}
+                                <br />
+                                {slot.available ? "Libre" : "Ocupado"}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <h4 className="fw-bold mb-3">Confirmar reserva</h4>
 
             <form onSubmit={handleReservationSubmit}>
               <div className="row g-3">
@@ -298,7 +457,6 @@ export const Classes = () => {
                     onChange={handleChange}
                     required
                   >
-                    <option value="">Selecciona tipo</option>
                     <option value="private">Privada</option>
                     <option value="group">Grupal</option>
                   </select>

@@ -1,5 +1,7 @@
 from flask import Blueprint, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import create_access_token
 
 from api.models import (
     db,
@@ -24,9 +26,112 @@ def parse_time(time_string):
     return datetime.strptime(time_string, "%H:%M").time()
 
 
+def time_to_minutes(time_value):
+    return time_value.hour * 60 + time_value.minute
+
+
+def normalize_time_range(start_time, end_time):
+    start_minutes = time_to_minutes(start_time)
+    end_minutes = time_to_minutes(end_time)
+
+    if end_minutes <= start_minutes:
+        end_minutes += 24 * 60
+
+    return start_minutes, end_minutes
+
+
+def time_ranges_overlap(start_a, end_a, start_b, end_b):
+    start_a_minutes, end_a_minutes = normalize_time_range(start_a, end_a)
+    start_b_minutes, end_b_minutes = normalize_time_range(start_b, end_b)
+
+    return start_a_minutes < end_b_minutes and end_a_minutes > start_b_minutes
+
+
 @api.route("/hello", methods=["GET"])
 def handle_hello():
     return jsonify({"message": "Padel Web API running"}), 200
+# -------------------------
+# AUTH
+# -------------------------
+
+@api.route("/register", methods=["POST"])
+def register():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    email = data.get("email")
+    password = data.get("password")
+    name = data.get("name")
+    level = data.get("level")
+    role = data.get("role", "player")
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    if not password:
+        return jsonify({"error": "Password is required"}), 400
+
+    existing_user = User.query.filter_by(email=email).first()
+
+    if existing_user:
+        return jsonify({"error": "User already exists"}), 400
+
+    hashed_password = generate_password_hash(password)
+
+    user = User(
+        email=email,
+        password=hashed_password,
+        name=name,
+        role=role,
+        level=level,
+        is_active=True,
+    )
+
+    db.session.add(user)
+    db.session.commit()
+
+    access_token = create_access_token(identity=str(user.id))
+
+    return jsonify({
+        "message": "User registered successfully",
+        "token": access_token,
+        "user": user.serialize(),
+    }), 201
+
+
+@api.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    if not password:
+        return jsonify({"error": "Password is required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if user is None:
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    if not check_password_hash(user.password, password):
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    access_token = create_access_token(identity=str(user.id))
+
+    return jsonify({
+        "message": "Login successful",
+        "token": access_token,
+        "user": user.serialize(),
+    }), 200
 
 
 # -------------------------
@@ -67,9 +172,11 @@ def create_user():
     if existing_user:
         return jsonify({"error": "User already exists"}), 400
 
+    hashed_password = generate_password_hash(data.get("password"))
+
     user = User(
         email=data.get("email"),
-        password=data.get("password"),
+        password=hashed_password,
         name=data.get("name"),
         role=data.get("role", "player"),
         level=data.get("level"),
@@ -237,14 +344,22 @@ def create_court_reservation():
     start_time = parse_time(data.get("start_time"))
     end_time = parse_time(data.get("end_time"))
 
-    existing_reservation = CourtReservation.query.filter_by(
-        court_id=data.get("court_id"),
-        date=reservation_date,
-        start_time=start_time,
+    if end_time <= start_time:
+        return jsonify({
+            "error": "La hora de fin debe ser posterior a la hora de inicio"
+        }), 400
+
+    existing_reservation = CourtReservation.query.filter(
+        CourtReservation.court_id == data.get("court_id"),
+        CourtReservation.date == reservation_date,
+        CourtReservation.start_time < end_time,
+        CourtReservation.end_time > start_time,
     ).first()
 
     if existing_reservation:
-        return jsonify({"error": "Court already reserved at this time"}), 400
+        return jsonify({
+            "error": "Esta pista ya está reservada en ese horario"
+        }), 400
 
     reservation = CourtReservation(
         user_id=data.get("user_id"),
@@ -293,6 +408,86 @@ def get_coach(coach_id):
         return jsonify({"error": "Coach not found"}), 404
 
     return jsonify(coach.serialize()), 200
+
+
+@api.route("/coaches/<int:coach_id>/availability", methods=["GET"])
+def get_coach_availability(coach_id):
+    coach = Coach.query.get(coach_id)
+
+    if coach is None:
+        return jsonify({"error": "Coach not found"}), 404
+
+    selected_date_param = request.args.get("date")
+
+    if selected_date_param:
+        selected_date = parse_date(selected_date_param)
+    else:
+        selected_date = datetime.today().date()
+
+    week_start = selected_date - timedelta(days=selected_date.weekday())
+
+    slot_starts = [
+        "16:00",
+        "17:00",
+        "18:00",
+        "19:00",
+        "20:00",
+        "21:00",
+        "22:00",
+        "23:00",
+    ]
+
+    week_days = []
+
+    for day_index in range(7):
+        current_date = week_start + timedelta(days=day_index)
+
+        reservations = ClassReservation.query.filter_by(
+            coach_id=coach_id,
+            date=current_date,
+        ).all()
+
+        slots = []
+
+        for slot_start_string in slot_starts:
+            slot_start = parse_time(slot_start_string)
+
+            if slot_start_string == "23:00":
+                slot_end = parse_time("00:00")
+            else:
+                slot_end_hour = int(slot_start_string.split(":")[0]) + 1
+                slot_end = parse_time(f"{slot_end_hour:02d}:00")
+
+            is_available = True
+
+            for reservation in reservations:
+                if time_ranges_overlap(
+                    slot_start,
+                    slot_end,
+                    reservation.start_time,
+                    reservation.end_time,
+                ):
+                    is_available = False
+                    break
+
+            slots.append({
+                "start_time": slot_start.strftime("%H:%M"),
+                "end_time": slot_end.strftime("%H:%M"),
+                "available": is_available,
+            })
+
+        week_days.append({
+            "date": current_date.isoformat(),
+            "day_name": current_date.strftime("%A"),
+            "slots": slots,
+        })
+
+    return jsonify({
+        "coach_id": coach.id,
+        "coach_name": coach.name,
+        "week_start": week_start.isoformat(),
+        "days": week_days,
+    }), 200
 
 
 @api.route("/coaches", methods=["POST"])
@@ -397,12 +592,37 @@ def create_class_reservation():
     if coach is None:
         return jsonify({"error": "Coach not found"}), 404
 
+    class_date = parse_date(data.get("date"))
+    start_time = parse_time(data.get("start_time"))
+    end_time = parse_time(data.get("end_time"))
+
+    if end_time <= start_time:
+        return jsonify({
+            "error": "La hora de fin debe ser posterior a la hora de inicio"
+        }), 400
+
+    existing_classes = ClassReservation.query.filter_by(
+        coach_id=data.get("coach_id"),
+        date=class_date,
+    ).all()
+
+    for existing_class in existing_classes:
+        if time_ranges_overlap(
+            start_time,
+            end_time,
+            existing_class.start_time,
+            existing_class.end_time,
+        ):
+            return jsonify({
+                "error": "Este profesor ya tiene una clase reservada en ese horario"
+            }), 400
+
     reservation = ClassReservation(
         user_id=data.get("user_id"),
         coach_id=data.get("coach_id"),
-        date=parse_date(data.get("date")),
-        start_time=parse_time(data.get("start_time")),
-        end_time=parse_time(data.get("end_time")),
+        date=class_date,
+        start_time=start_time,
+        end_time=end_time,
         class_type=data.get("class_type"),
         level=data.get("level"),
         price=data.get("price", 0),

@@ -1,11 +1,12 @@
 """
 This module takes care of starting the API Server, Loading the DB and Adding the endpoints
 """
+
 import os
-from flask import Flask, request, jsonify, url_for, send_from_directory
+from flask import Flask, jsonify, send_from_directory
 from flask_migrate import Migrate
-from flask_swagger import swagger
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager
 
 from api.utils import APIException, generate_sitemap
 from api.models import db
@@ -13,7 +14,6 @@ from api.routes import api
 from api.admin import setup_admin
 from api.commands import setup_commands
 
-# from models import Person
 
 ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
 
@@ -25,8 +25,12 @@ static_file_dir = os.path.join(
 app = Flask(__name__)
 app.url_map.strict_slashes = False
 
-# Activate CORS so the frontend can connect with the backend
-CORS(app)
+# CORS: permite que el frontend pueda conectarse con el backend
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# JWT: necesario para login/register con token
+app.config["JWT_SECRET_KEY"] = os.getenv("FLASK_APP_KEY", "dev-secret-key")
+jwt = JWTManager(app)
 
 # Database configuration
 db_url = os.getenv("DATABASE_URL")
@@ -44,13 +48,13 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 MIGRATE = Migrate(app, db, compare_type=True)
 db.init_app(app)
 
-# Add the admin
+# Admin
 setup_admin(app)
 
-# Add commands
+# Commands
 setup_commands(app)
 
-# Add all endpoints from the API with an "/api" prefix
+# API routes
 app.register_blueprint(api, url_prefix="/api")
 
 
@@ -76,7 +80,7 @@ def serve_any_other_file(path):
         path = "index.html"
 
     response = send_from_directory(static_file_dir, path)
-    response.cache_control.max_age = 0  # avoid cache memory
+    response.cache_control.max_age = 0
 
     return response
 

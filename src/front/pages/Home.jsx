@@ -1,6 +1,9 @@
 import { Link } from "react-router-dom";
 
 export const Home = () => {
+  const clubLocationUrl =
+    import.meta.env.VITE_CLUB_LOCATION_URL || "https://www.google.com/maps";
+
   return (
     <div>
       <section className="bg-light py-5">
@@ -22,6 +25,15 @@ export const Home = () => {
             <Link to="/classes" className="btn btn-outline-success btn-lg">
               Reservar clase
             </Link>
+
+            <a
+              href={clubLocationUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-outline-dark btn-lg"
+            >
+              Ver ubicación del club
+            </a>
           </div>
         </div>
       </section>
@@ -92,11 +104,58 @@ export const Home = () => {
         <div className="bg-success text-white rounded p-5 text-center">
           <h2>Próximo torneo americano</h2>
           <p className="mb-3">
-            Viernes 24 de mayo · Nivel intermedio · 16 jugadores
+            Apúntate a los próximos torneos del club y compite con otros
+            jugadores.
           </p>
           <Link to="/tournaments" className="btn btn-light">
-            Inscribirme
+            Ver torneos
           </Link>
+        </div>
+      </section>
+
+      <section className="container my-5">
+        <div className="row align-items-center g-4">
+          <div className="col-md-6">
+            <h2 className="fw-bold">Ubicación del club</h2>
+            <p className="text-muted">
+              Encuentra fácilmente el club en Google Maps y calcula la mejor
+              ruta para llegar.
+            </p>
+
+            <p className="mb-3">
+              <strong>Dirección:</strong> Padel Pals, Abhur Al Junoobiyah,
+              Jeddah 23734, Arabia Saudí
+            </p>
+
+            <a
+              href={clubLocationUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-success"
+            >
+              Abrir en Google Maps
+            </a>
+          </div>
+
+          <div className="col-md-6">
+            <div className="card shadow-sm">
+              <div className="card-body text-center">
+                <h5 className="card-title">Padel Pals</h5>
+                <p className="card-text">
+                  Padel Pals, Abhur Al Junoobiyah, Jeddah 23734, Arabia Saudí
+                </p>
+
+                <a
+                  href={clubLocationUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-outline-success"
+                >
+                  Ver ubicación
+                </a>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </div>
