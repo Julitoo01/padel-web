@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const getMonday = (date) => {
   const copiedDate = new Date(date);
@@ -27,15 +28,15 @@ const getSpanishDayName = (dateString) => {
 };
 
 export const Classes = () => {
+  const navigate = useNavigate();
+
   const [coaches, setCoaches] = useState([]);
-  const [users, setUsers] = useState([]);
   const [selectedCoach, setSelectedCoach] = useState(null);
   const [availability, setAvailability] = useState(null);
 
   const [weekStart, setWeekStart] = useState(formatDate(getMonday(new Date())));
 
   const [formData, setFormData] = useState({
-    user_id: "",
     date: "",
     start_time: "",
     end_time: "",
@@ -50,6 +51,16 @@ export const Classes = () => {
   const [error, setError] = useState("");
 
   const backendUrl = import.meta.env.VITE_BACKEND_URL || "";
+
+  const getLoggedUser = () => {
+    const storedUser = localStorage.getItem("user");
+
+    if (!storedUser) {
+      return null;
+    }
+
+    return JSON.parse(storedUser);
+  };
 
   const getCoaches = async () => {
     try {
@@ -66,22 +77,6 @@ export const Classes = () => {
       setError("No se pudieron cargar los entrenadores");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const getUsers = async () => {
-    try {
-      const response = await fetch(`${backendUrl}/api/users`);
-
-      if (!response.ok) {
-        throw new Error("Error al cargar usuarios");
-      }
-
-      const data = await response.json();
-      setUsers(data);
-    } catch (error) {
-      console.error(error);
-      setError("No se pudieron cargar los usuarios");
     }
   };
 
@@ -109,7 +104,6 @@ export const Classes = () => {
 
   useEffect(() => {
     getCoaches();
-    getUsers();
   }, []);
 
   useEffect(() => {
@@ -119,13 +113,20 @@ export const Classes = () => {
   }, [selectedCoach, weekStart]);
 
   const openReservationForm = (coach) => {
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión para reservar una clase");
+      navigate("/login");
+      return;
+    }
+
     setSelectedCoach(coach);
     setAvailability(null);
     setMessage("");
     setError("");
 
     setFormData({
-      user_id: "",
       date: "",
       start_time: "",
       end_time: "",
@@ -194,6 +195,14 @@ export const Classes = () => {
   const handleReservationSubmit = async (event) => {
     event.preventDefault();
 
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión para reservar una clase");
+      navigate("/login");
+      return;
+    }
+
     if (!selectedCoach) {
       setError("Selecciona un entrenador");
       return;
@@ -209,7 +218,7 @@ export const Classes = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          user_id: Number(formData.user_id),
+          user_id: loggedUser.id,
           coach_id: selectedCoach.id,
           date: formData.date,
           start_time: formData.start_time,
@@ -229,7 +238,6 @@ export const Classes = () => {
       setMessage("Clase reservada correctamente");
 
       setFormData({
-        user_id: "",
         date: "",
         start_time: "",
         end_time: "",
@@ -245,9 +253,12 @@ export const Classes = () => {
     }
   };
 
+  const loggedUser = getLoggedUser();
+
   return (
     <div className="container my-5">
       <h1 className="fw-bold mb-3">Reservar clase</h1>
+
       <p className="text-muted">
         Elige un entrenador y selecciona una hora disponible en el calendario
         semanal.
@@ -257,6 +268,18 @@ export const Classes = () => {
         Horario habitual mostrado: de 16:00 a 00:00. También puedes solicitar
         otro horario escribiéndolo manualmente en el formulario.
       </div>
+
+      {!loggedUser && (
+        <div className="alert alert-warning">
+          Debes iniciar sesión para poder reservar una clase.
+        </div>
+      )}
+
+      {loggedUser && (
+        <div className="alert alert-info">
+          Reserva como: <strong>{loggedUser.name || loggedUser.email}</strong>
+        </div>
+      )}
 
       {loading && <p>Cargando entrenadores...</p>}
 
@@ -395,21 +418,12 @@ export const Classes = () => {
               <div className="row g-3">
                 <div className="col-md-6">
                   <label className="form-label">Usuario</label>
-                  <select
-                    className="form-select"
-                    name="user_id"
-                    value={formData.user_id}
-                    onChange={handleChange}
-                    required
-                  >
-                    <option value="">Selecciona un usuario</option>
-
-                    {users.map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.name || user.email}
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={loggedUser?.name || loggedUser?.email || ""}
+                    disabled
+                  />
                 </div>
 
                 <div className="col-md-6">

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 export const Courts = () => {
+  const navigate = useNavigate();
+
   const [courts, setCourts] = useState([]);
-  const [users, setUsers] = useState([]);
   const [selectedCourt, setSelectedCourt] = useState(null);
 
   const [formData, setFormData] = useState({
-    user_id: "",
     date: "",
     start_time: "",
     end_time: "",
@@ -18,6 +19,16 @@ export const Courts = () => {
   const [error, setError] = useState("");
 
   const backendUrl = import.meta.env.VITE_BACKEND_URL || "";
+
+  const getLoggedUser = () => {
+    const storedUser = localStorage.getItem("user");
+
+    if (!storedUser) {
+      return null;
+    }
+
+    return JSON.parse(storedUser);
+  };
 
   const getCourts = async () => {
     try {
@@ -37,34 +48,24 @@ export const Courts = () => {
     }
   };
 
-  const getUsers = async () => {
-    try {
-      const response = await fetch(`${backendUrl}/api/users`);
-
-      if (!response.ok) {
-        throw new Error("Error al cargar usuarios");
-      }
-
-      const data = await response.json();
-      setUsers(data);
-    } catch (error) {
-      console.error(error);
-      setError("No se pudieron cargar los usuarios");
-    }
-  };
-
   useEffect(() => {
     getCourts();
-    getUsers();
   }, []);
 
   const openReservationForm = (court) => {
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión para reservar una pista");
+      navigate("/login");
+      return;
+    }
+
     setSelectedCourt(court);
     setMessage("");
     setError("");
 
     setFormData({
-      user_id: "",
       date: "",
       start_time: "",
       end_time: "",
@@ -90,6 +91,14 @@ export const Courts = () => {
   const handleReservationSubmit = async (event) => {
     event.preventDefault();
 
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión para reservar una pista");
+      navigate("/login");
+      return;
+    }
+
     if (!selectedCourt) {
       setError("Selecciona una pista");
       return;
@@ -105,7 +114,7 @@ export const Courts = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          user_id: Number(formData.user_id),
+          user_id: loggedUser.id,
           court_id: selectedCourt.id,
           date: formData.date,
           start_time: formData.start_time,
@@ -124,7 +133,6 @@ export const Courts = () => {
       setSelectedCourt(null);
 
       setFormData({
-        user_id: "",
         date: "",
         start_time: "",
         end_time: "",
@@ -136,12 +144,27 @@ export const Courts = () => {
     }
   };
 
+  const loggedUser = getLoggedUser();
+
   return (
     <div className="container my-5">
       <h1 className="fw-bold mb-3">Reservar pista</h1>
+
       <p className="text-muted">
         Elige una pista disponible para hacer tu reserva.
       </p>
+
+      {!loggedUser && (
+        <div className="alert alert-warning">
+          Debes iniciar sesión para poder reservar una pista.
+        </div>
+      )}
+
+      {loggedUser && (
+        <div className="alert alert-info">
+          Reserva como: <strong>{loggedUser.name || loggedUser.email}</strong>
+        </div>
+      )}
 
       {loading && <p>Cargando pistas...</p>}
 
@@ -201,6 +224,7 @@ export const Courts = () => {
                 <h3 className="fw-bold mb-1">
                   Reservar {selectedCourt.name}
                 </h3>
+
                 <p className="text-muted mb-0">
                   Completa los datos de la reserva.
                 </p>
@@ -218,21 +242,12 @@ export const Courts = () => {
               <div className="row g-3">
                 <div className="col-md-6">
                   <label className="form-label">Usuario</label>
-                  <select
-                    className="form-select"
-                    name="user_id"
-                    value={formData.user_id}
-                    onChange={handleChange}
-                    required
-                  >
-                    <option value="">Selecciona un usuario</option>
-
-                    {users.map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.name || user.email}
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={loggedUser?.name || loggedUser?.email || ""}
+                    disabled
+                  />
                 </div>
 
                 <div className="col-md-6">
