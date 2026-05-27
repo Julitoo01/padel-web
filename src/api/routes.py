@@ -17,6 +17,8 @@ from api.models import (
 
 api = Blueprint("api", __name__)
 
+CLASS_PRICE = 360
+
 
 def parse_date(date_string):
     return datetime.strptime(date_string, "%Y-%m-%d").date()
@@ -45,6 +47,23 @@ def time_ranges_overlap(start_a, end_a, start_b, end_b):
     start_b_minutes, end_b_minutes = normalize_time_range(start_b, end_b)
 
     return start_a_minutes < end_b_minutes and end_a_minutes > start_b_minutes
+
+
+def get_or_create_ranking(user_id):
+    ranking_player = Ranking.query.filter_by(user_id=user_id).first()
+
+    if not ranking_player:
+        ranking_player = Ranking(
+            user_id=user_id,
+            points=0,
+            matches_played=0,
+            wins=0,
+            losses=0,
+        )
+        db.session.add(ranking_player)
+        db.session.flush()
+
+    return ranking_player
 
 
 @api.route("/hello", methods=["GET"])
@@ -278,6 +297,112 @@ def get_court(court_id):
     return jsonify(court.serialize()), 200
 
 
+@api.route("/courts/<int:court_id>/availability", methods=["GET"])
+def get_court_availability(court_id):
+    court = Court.query.get(court_id)
+
+    if court is None:
+        return jsonify({"error": "Court not found"}), 404
+
+    selected_date_param = request.args.get("date")
+
+    if selected_date_param:
+        selected_date = parse_date(selected_date_param)
+    else:
+        selected_date = datetime.today().date()
+
+    week_start = selected_date - timedelta(days=selected_date.weekday())
+
+    # Bloques de 1h30 desde 16:00 hasta 02:30
+    # Si quieres terminar exactamente a las 03:00, se puede añadir 01:30 - 03:00
+    court_slots = [
+        ("16:00", "17:30"),
+        ("17:30", "19:00"),
+        ("19:00", "20:30"),
+        ("20:30", "22:00"),
+        ("22:00", "23:30"),
+        ("23:30", "01:00"),
+        ("01:00", "02:30"),
+    ]
+
+    week_days = []
+
+    for day_index in range(7):
+        current_date = week_start + timedelta(days=day_index)
+        slots = []
+
+        for slot_start_string, slot_end_string in court_slots:
+            slot_start = parse_time(slot_start_string)
+            slot_end = parse_time(slot_end_string)
+
+            # Las horas de madrugada pertenecen al día siguiente
+            if slot_start_string in ["00:00", "00:30", "01:00", "01:30", "02:00"]:
+                slot_date = current_date + timedelta(days=1)
+            else:
+                slot_date = current_date
+
+            slot_start_datetime = datetime.combine(slot_date, slot_start)
+            slot_end_datetime = datetime.combine(slot_date, slot_end)
+
+            # Si el slot cruza medianoche, la hora final es del día siguiente
+            if slot_end <= slot_start:
+                slot_end_datetime = slot_end_datetime + timedelta(days=1)
+
+            candidate_start_date = slot_start_datetime.date() - timedelta(days=1)
+            candidate_end_date = slot_end_datetime.date()
+
+            reservations = CourtReservation.query.filter(
+                CourtReservation.court_id == court_id,
+                CourtReservation.date >= candidate_start_date,
+                CourtReservation.date <= candidate_end_date,
+            ).all()
+
+            is_available = True
+
+            for reservation in reservations:
+                reservation_start_datetime = datetime.combine(
+                    reservation.date,
+                    reservation.start_time,
+                )
+
+                reservation_end_datetime = datetime.combine(
+                    reservation.date,
+                    reservation.end_time,
+                )
+
+                if reservation.end_time <= reservation.start_time:
+                    reservation_end_datetime = reservation_end_datetime + timedelta(days=1)
+
+                overlaps = (
+                    slot_start_datetime < reservation_end_datetime
+                    and slot_end_datetime > reservation_start_datetime
+                )
+
+                if overlaps:
+                    is_available = False
+                    break
+
+            slots.append({
+                "date": slot_date.isoformat(),
+                "start_time": slot_start.strftime("%H:%M"),
+                "end_time": slot_end.strftime("%H:%M"),
+                "available": is_available,
+            })
+
+        week_days.append({
+            "date": current_date.isoformat(),
+            "day_name": current_date.strftime("%A"),
+            "slots": slots,
+        })
+
+    return jsonify({
+        "court_id": court.id,
+        "court_name": court.name,
+        "week_start": week_start.isoformat(),
+        "days": week_days,
+    }), 200
+
+
 @api.route("/courts", methods=["POST"])
 def create_court():
     data = request.get_json()
@@ -376,22 +501,78 @@ def create_court_reservation():
     start_time = parse_time(data.get("start_time"))
     end_time = parse_time(data.get("end_time"))
 
+    reservation_start_datetime = datetime.combine(reservation_date, start_time)
+    reservation_end_datetime = datetime.combine(reservation_date, end_time)
+
     if end_time <= start_time:
+        reservation_end_datetime = reservation_end_datetime + timedelta(days=1)
+
+    if reservation_start_datetime < datetime.now():
         return jsonify({
-            "error": "La hora de fin debe ser posterior a la hora de inicio"
+            "error": "No se pueden reservar pistas en fechas u horas pasadas"
         }), 400
 
-    existing_reservation = CourtReservation.query.filter(
+    duration_minutes = int(
+        (reservation_end_datetime - reservation_start_datetime).total_seconds() / 60
+    )
+
+    if duration_minutes != 90:
+        return jsonify({
+            "error": "Las reservas de pista deben ser de 1 hora y media"
+        }), 400
+
+    allowed_slots = [
+        ("16:00", "17:30"),
+        ("17:30", "19:00"),
+        ("19:00", "20:30"),
+        ("20:30", "22:00"),
+        ("22:00", "23:30"),
+        ("23:30", "01:00"),
+        ("01:00", "02:30"),
+    ]
+
+    selected_slot = (
+        start_time.strftime("%H:%M"),
+        end_time.strftime("%H:%M"),
+    )
+
+    if selected_slot not in allowed_slots:
+        return jsonify({
+            "error": "Horario no permitido. Las pistas se reservan en bloques de 1h30 entre 16:00 y 02:30"
+        }), 400
+
+    candidate_start_date = reservation_start_datetime.date() - timedelta(days=1)
+    candidate_end_date = reservation_end_datetime.date()
+
+    existing_reservations = CourtReservation.query.filter(
         CourtReservation.court_id == data.get("court_id"),
-        CourtReservation.date == reservation_date,
-        CourtReservation.start_time < end_time,
-        CourtReservation.end_time > start_time,
-    ).first()
+        CourtReservation.date >= candidate_start_date,
+        CourtReservation.date <= candidate_end_date,
+    ).all()
 
-    if existing_reservation:
-        return jsonify({
-            "error": "Esta pista ya está reservada en ese horario"
-        }), 400
+    for existing_reservation in existing_reservations:
+        existing_start_datetime = datetime.combine(
+            existing_reservation.date,
+            existing_reservation.start_time,
+        )
+
+        existing_end_datetime = datetime.combine(
+            existing_reservation.date,
+            existing_reservation.end_time,
+        )
+
+        if existing_reservation.end_time <= existing_reservation.start_time:
+            existing_end_datetime = existing_end_datetime + timedelta(days=1)
+
+        overlaps = (
+            reservation_start_datetime < existing_end_datetime
+            and reservation_end_datetime > existing_start_datetime
+        )
+
+        if overlaps:
+            return jsonify({
+                "error": "Esta pista ya está reservada en ese horario"
+            }), 400
 
     reservation = CourtReservation(
         user_id=data.get("user_id"),
@@ -536,8 +717,8 @@ def create_coach():
         name=data.get("name"),
         bio=data.get("bio"),
         level=data.get("level"),
-        price_private=data.get("price_private", 40),
-        price_group=data.get("price_group", 15),
+        price_private=CLASS_PRICE,
+        price_group=CLASS_PRICE,
         is_active=data.get("is_active", True),
     )
 
@@ -562,8 +743,8 @@ def update_coach(coach_id):
     coach.name = data.get("name", coach.name)
     coach.bio = data.get("bio", coach.bio)
     coach.level = data.get("level", coach.level)
-    coach.price_private = data.get("price_private", coach.price_private)
-    coach.price_group = data.get("price_group", coach.price_group)
+    coach.price_private = CLASS_PRICE
+    coach.price_group = CLASS_PRICE
     coach.is_active = data.get("is_active", coach.is_active)
 
     db.session.commit()
@@ -628,6 +809,13 @@ def create_class_reservation():
     start_time = parse_time(data.get("start_time"))
     end_time = parse_time(data.get("end_time"))
 
+    class_datetime = datetime.combine(class_date, start_time)
+
+    if class_datetime < datetime.now():
+        return jsonify({
+            "error": "No se pueden reservar clases en fechas u horas pasadas"
+        }), 400
+
     if end_time <= start_time:
         return jsonify({
             "error": "La hora de fin debe ser posterior a la hora de inicio"
@@ -657,7 +845,7 @@ def create_class_reservation():
         end_time=end_time,
         class_type=data.get("class_type"),
         level=data.get("level"),
-        price=data.get("price", 0),
+        price=360,
         status="confirmed",
     )
 
@@ -860,6 +1048,34 @@ def create_ranking_player():
     return jsonify(ranking_player.serialize()), 201
 
 
+@api.route("/ranking/sync", methods=["POST"])
+def sync_ranking():
+    users = User.query.all()
+    created = 0
+
+    for user in users:
+        existing_ranking = Ranking.query.filter_by(user_id=user.id).first()
+
+        if not existing_ranking:
+            ranking_player = Ranking(
+                user_id=user.id,
+                points=0,
+                matches_played=0,
+                wins=0,
+                losses=0,
+            )
+
+            db.session.add(ranking_player)
+            created += 1
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Ranking synced successfully",
+        "created": created,
+    }), 200
+
+
 @api.route("/ranking/<int:ranking_id>", methods=["PUT"])
 def update_ranking_player(ranking_id):
     ranking_player = Ranking.query.get(ranking_id)
@@ -896,32 +1112,8 @@ def delete_ranking_player(ranking_id):
     db.session.commit()
 
     return jsonify({"message": "Ranking player deleted successfully"}), 200
-@api.route("/ranking/sync", methods=["POST"])
-def sync_ranking():
-    users = User.query.all()
-    created = 0
 
-    for user in users:
-        existing_ranking = Ranking.query.filter_by(user_id=user.id).first()
 
-        if not existing_ranking:
-            ranking_player = Ranking(
-                user_id=user.id,
-                points=0,
-                matches_played=0,
-                wins=0,
-                losses=0,
-            )
-
-            db.session.add(ranking_player)
-            created += 1
-
-    db.session.commit()
-
-    return jsonify({
-        "message": "Ranking synced successfully",
-        "created": created
-    }), 200
 # -------------------------
 # MATCH RESULTS
 # -------------------------
@@ -990,7 +1182,6 @@ def upload_match_result():
     else:
         return jsonify({"error": "Un set no puede acabar empatado"}), 400
 
-    # Si van 1-1 en sets, hace falta set 3
     if team1_sets == 1 and team2_sets == 1:
         if data.get("set3_team1") is None or data.get("set3_team1") == "":
             return jsonify({"error": "Se necesita Set 3 porque cada equipo ganó un set"}), 400
@@ -1016,22 +1207,6 @@ def upload_match_result():
         winner_ids = [team2_drive_id, team2_left_id]
         loser_ids = [team1_drive_id, team1_left_id]
         winner_team = "Equipo 2"
-
-    def get_or_create_ranking(user_id):
-        ranking_player = Ranking.query.filter_by(user_id=user_id).first()
-
-        if not ranking_player:
-            ranking_player = Ranking(
-                user_id=user_id,
-                points=0,
-                matches_played=0,
-                wins=0,
-                losses=0,
-            )
-            db.session.add(ranking_player)
-            db.session.flush()
-
-        return ranking_player
 
     for user_id in winner_ids:
         ranking_player = get_or_create_ranking(user_id)

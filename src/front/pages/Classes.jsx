@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+const CLASS_PRICE = 360;
+
 const getMonday = (date) => {
   const copiedDate = new Date(date);
   const day = copiedDate.getDay();
   const diff = copiedDate.getDate() - day + (day === 0 ? -6 : 1);
   copiedDate.setDate(diff);
+  copiedDate.setHours(0, 0, 0, 0);
   return copiedDate;
 };
 
@@ -27,6 +30,13 @@ const getSpanishDayName = (dateString) => {
   });
 };
 
+const isPastSlot = (dayDate, startTime) => {
+  const slotDateTime = new Date(`${dayDate}T${startTime}:00`);
+  const now = new Date();
+
+  return slotDateTime < now;
+};
+
 export const Classes = () => {
   const navigate = useNavigate();
 
@@ -42,7 +52,7 @@ export const Classes = () => {
     end_time: "",
     class_type: "private",
     level: "",
-    price: "",
+    price: CLASS_PRICE,
   });
 
   const [loading, setLoading] = useState(true);
@@ -83,6 +93,7 @@ export const Classes = () => {
   const getAvailability = async (coachId, selectedWeekStart) => {
     try {
       setAvailabilityLoading(true);
+      setError("");
 
       const response = await fetch(
         `${backendUrl}/api/coaches/${coachId}/availability?date=${selectedWeekStart}`
@@ -132,7 +143,7 @@ export const Classes = () => {
       end_time: "",
       class_type: "private",
       level: "",
-      price: coach.price_private || "",
+      price: CLASS_PRICE,
     });
   };
 
@@ -141,6 +152,15 @@ export const Classes = () => {
     setAvailability(null);
     setMessage("");
     setError("");
+
+    setFormData({
+      date: "",
+      start_time: "",
+      end_time: "",
+      class_type: "private",
+      level: "",
+      price: CLASS_PRICE,
+    });
   };
 
   const goToPreviousWeek = () => {
@@ -156,13 +176,18 @@ export const Classes = () => {
   };
 
   const handleSlotClick = (day, slot) => {
-    if (!slot.available) return;
+    const pastSlot = isPastSlot(day.date, slot.start_time);
+
+    if (!slot.available || pastSlot) {
+      return;
+    }
 
     setFormData({
       ...formData,
       date: day.date,
       start_time: slot.start_time,
       end_time: slot.end_time,
+      price: CLASS_PRICE,
     });
 
     setMessage(
@@ -174,22 +199,11 @@ export const Classes = () => {
   const handleChange = (event) => {
     const { name, value } = event.target;
 
-    let updatedFormData = {
+    setFormData({
       ...formData,
       [name]: value,
-    };
-
-    if (name === "class_type" && selectedCoach) {
-      if (value === "private") {
-        updatedFormData.price = selectedCoach.price_private;
-      }
-
-      if (value === "group") {
-        updatedFormData.price = selectedCoach.price_group;
-      }
-    }
-
-    setFormData(updatedFormData);
+      price: CLASS_PRICE,
+    });
   };
 
   const handleReservationSubmit = async (event) => {
@@ -205,6 +219,20 @@ export const Classes = () => {
 
     if (!selectedCoach) {
       setError("Selecciona un entrenador");
+      return;
+    }
+
+    if (!formData.date || !formData.start_time || !formData.end_time) {
+      setError("Selecciona primero una hora libre del calendario");
+      return;
+    }
+
+    const selectedDateTime = new Date(
+      `${formData.date}T${formData.start_time}:00`
+    );
+
+    if (selectedDateTime < new Date()) {
+      setError("No puedes reservar una clase en una fecha u hora pasada");
       return;
     }
 
@@ -225,7 +253,7 @@ export const Classes = () => {
           end_time: formData.end_time,
           class_type: formData.class_type,
           level: formData.level,
-          price: Number(formData.price),
+          price: CLASS_PRICE,
         }),
       });
 
@@ -243,7 +271,7 @@ export const Classes = () => {
         end_time: "",
         class_type: "private",
         level: "",
-        price: selectedCoach.price_private || "",
+        price: CLASS_PRICE,
       });
 
       getAvailability(selectedCoach.id, weekStart);
@@ -254,6 +282,8 @@ export const Classes = () => {
   };
 
   const loggedUser = getLoggedUser();
+  const currentWeekStart = formatDate(getMonday(new Date()));
+  const disablePreviousWeek = weekStart <= currentWeekStart;
 
   return (
     <div className="container my-5">
@@ -265,8 +295,8 @@ export const Classes = () => {
       </p>
 
       <div className="alert alert-info">
-        Horario habitual mostrado: de 16:00 a 00:00. También puedes solicitar
-        otro horario escribiéndolo manualmente en el formulario.
+        Precio fijo de clase: <strong>360 SAR</strong>. Horario habitual
+        mostrado: de 16:00 a 00:00.
       </div>
 
       {!loggedUser && (
@@ -305,11 +335,7 @@ export const Classes = () => {
                 </p>
 
                 <p className="mb-1">
-                  <strong>Clase privada:</strong> {coach.price_private} €
-                </p>
-
-                <p className="mb-1">
-                  <strong>Clase grupal:</strong> {coach.price_group} €
+                  <strong>Precio clase:</strong> 360 SAR
                 </p>
 
                 <p className="text-muted">
@@ -338,7 +364,8 @@ export const Classes = () => {
                   Disponibilidad de {selectedCoach.name}
                 </h3>
                 <p className="text-muted mb-0">
-                  Selecciona una hora libre o escribe otro horario manualmente.
+                  Selecciona una hora libre. Las horas pasadas aparecerán
+                  bloqueadas.
                 </p>
               </div>
 
@@ -354,6 +381,7 @@ export const Classes = () => {
               <button
                 className="btn btn-outline-success btn-sm"
                 onClick={goToPreviousWeek}
+                disabled={disablePreviousWeek}
               >
                 Semana anterior
               </button>
@@ -372,7 +400,10 @@ export const Classes = () => {
 
             {availability && (
               <div className="table-responsive mb-4">
-                <table className="table table-bordered align-middle text-center">
+                <table
+                  className="table table-bordered align-middle text-center"
+                  style={{ minWidth: "1000px" }}
+                >
                   <thead className="table-success">
                     <tr>
                       {availability.days.map((day) => (
@@ -386,23 +417,36 @@ export const Classes = () => {
                       {availability.days.map((day) => (
                         <td key={day.date} style={{ minWidth: "140px" }}>
                           <div className="d-grid gap-2">
-                            {day.slots.map((slot) => (
-                              <button
-                                key={`${day.date}-${slot.start_time}`}
-                                type="button"
-                                className={
-                                  slot.available
-                                    ? "btn btn-outline-success btn-sm"
-                                    : "btn btn-outline-danger btn-sm"
-                                }
-                                disabled={!slot.available}
-                                onClick={() => handleSlotClick(day, slot)}
-                              >
-                                {slot.start_time} - {slot.end_time}
-                                <br />
-                                {slot.available ? "Libre" : "Ocupado"}
-                              </button>
-                            ))}
+                            {day.slots.map((slot) => {
+                              const pastSlot = isPastSlot(
+                                day.date,
+                                slot.start_time
+                              );
+
+                              const disabledSlot = !slot.available || pastSlot;
+
+                              return (
+                                <button
+                                  key={`${day.date}-${slot.start_time}`}
+                                  type="button"
+                                  className={
+                                    disabledSlot
+                                      ? "btn btn-outline-secondary btn-sm"
+                                      : "btn btn-outline-success btn-sm"
+                                  }
+                                  disabled={disabledSlot}
+                                  onClick={() => handleSlotClick(day, slot)}
+                                >
+                                  {slot.start_time} - {slot.end_time}
+                                  <br />
+                                  {pastSlot
+                                    ? "Pasado"
+                                    : slot.available
+                                    ? "Libre"
+                                    : "Ocupado"}
+                                </button>
+                              );
+                            })}
                           </div>
                         </td>
                       ))}
@@ -427,12 +471,23 @@ export const Classes = () => {
                 </div>
 
                 <div className="col-md-6">
+                  <label className="form-label">Profesor</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={selectedCoach.name}
+                    disabled
+                  />
+                </div>
+
+                <div className="col-md-4">
                   <label className="form-label">Fecha</label>
                   <input
                     type="date"
                     className="form-control"
                     name="date"
                     value={formData.date}
+                    min={formatDate(new Date())}
                     onChange={handleChange}
                     required
                   />
@@ -476,7 +531,7 @@ export const Classes = () => {
                   </select>
                 </div>
 
-                <div className="col-md-6">
+                <div className="col-md-4">
                   <label className="form-label">Nivel</label>
                   <select
                     className="form-select"
@@ -493,21 +548,20 @@ export const Classes = () => {
                   </select>
                 </div>
 
-                <div className="col-md-6">
+                <div className="col-md-4">
                   <label className="form-label">Precio</label>
                   <input
                     type="number"
                     className="form-control"
                     name="price"
                     value={formData.price}
-                    onChange={handleChange}
-                    required
+                    disabled
                   />
                 </div>
               </div>
 
               <button className="btn btn-success mt-4" type="submit">
-                Confirmar clase
+                Confirmar clase - 360 SAR
               </button>
             </form>
           </div>

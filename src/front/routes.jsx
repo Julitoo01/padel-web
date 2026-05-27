@@ -13,6 +13,8 @@ import { Tournaments } from "./pages/Tournaments";
 import { Ranking } from "./pages/Ranking";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
+import { PaymentSuccess } from "./pages/PaymentSuccess";
+import { PaymentCancel } from "./pages/PaymentCancel";
 
 export const router = createBrowserRouter(
   createRoutesFromElements(
@@ -23,9 +25,10 @@ export const router = createBrowserRouter(
       <Route path="classes" element={<Classes />} />
       <Route path="tournaments" element={<Tournaments />} />
       <Route path="ranking" element={<Ranking />} />
-
       <Route path="login" element={<Login />} />
       <Route path="register" element={<Register />} />
+      <Route path="payment-success" element={<PaymentSuccess />} />
+      <Route path="payment-cancel" element={<PaymentCancel />} />
     </Route>
   )
 );
