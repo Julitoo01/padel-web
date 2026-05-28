@@ -341,6 +341,59 @@ export const Tournaments = () => {
     }
   };
 
+  const handleCloseTournament = async (tournamentId) => {
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión");
+      navigate("/login");
+      return;
+    }
+
+    if (loggedUser.role !== "admin") {
+      setError("Solo el admin puede cerrar inscripciones");
+      return;
+    }
+
+    const confirmClose = window.confirm(
+      "¿Seguro que quieres cerrar las inscripciones? Se generará el cuadro y ya no podrán inscribirse más parejas."
+    );
+
+    if (!confirmClose) {
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+      setSelectedTournament(null);
+      setSelectedBracket(null);
+
+      const response = await fetch(
+        `${backendUrl}/api/tournaments/${tournamentId}/close`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo cerrar el torneo");
+      }
+
+      setMessage("Inscripciones cerradas y cuadro generado correctamente");
+
+      getTournaments();
+    } catch (error) {
+      console.error(error);
+      setError(error.message || "No se pudo cerrar el torneo");
+    }
+  };
+
   const loggedUser = getLoggedUser();
 
   const availablePartners = users.filter(
@@ -570,17 +623,35 @@ export const Tournaments = () => {
                       Ver cuadro
                     </button>
                   ) : (
-                    <button
-                      className="btn btn-success w-100"
-                      disabled={!canRegister}
-                      onClick={() => openRegistrationForm(tournament)}
-                    >
-                      {isFull
-                        ? "Completo"
-                        : !hasEnoughPlaces
-                        ? "No hay plazas para pareja"
-                        : "Inscribir pareja"}
-                    </button>
+                    <>
+                      <button
+                        className="btn btn-success w-100"
+                        disabled={!canRegister}
+                        onClick={() => openRegistrationForm(tournament)}
+                      >
+                        {isFull
+                          ? "Completo"
+                          : !hasEnoughPlaces
+                          ? "No hay plazas para pareja"
+                          : "Inscribir pareja"}
+                      </button>
+
+                      {loggedUser?.role === "admin" && registeredPlayers >= 4 && (
+                        <button
+                          className="btn btn-outline-danger w-100 mt-2"
+                          onClick={() => handleCloseTournament(tournament.id)}
+                        >
+                          Cerrar inscripciones y generar cuadro
+                        </button>
+                      )}
+
+                      {loggedUser?.role === "admin" && registeredPlayers < 4 && (
+                        <small className="text-muted mt-2 d-block">
+                          Necesitas mínimo 4 jugadores inscritos para cerrar el
+                          torneo.
+                        </small>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
