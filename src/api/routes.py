@@ -1,8 +1,9 @@
+import random
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token
-import random
+from sqlalchemy.orm.attributes import flag_modified
 
 from api.models import (
     db,
@@ -65,6 +66,8 @@ def get_or_create_ranking(user_id):
         db.session.flush()
 
     return ranking_player
+
+
 def build_tournament_teams(tournament_id):
     registrations = TournamentRegistration.query.filter_by(
         tournament_id=tournament_id
@@ -175,11 +178,19 @@ def generate_bracket(teams):
         team_1 = shuffled_teams[index]
         team_2 = shuffled_teams[index + 1]
 
+        winner = None
+
+        if team_1.get("status") != "bye" and team_2.get("status") == "bye":
+            winner = team_1
+
+        if team_1.get("status") == "bye" and team_2.get("status") != "bye":
+            winner = team_2
+
         first_round_matches.append({
             "match_id": f"R1-M{match_number}",
             "team_1": team_1,
             "team_2": team_2,
-            "winner": None,
+            "winner": winner,
         })
 
         match_number += 1
@@ -211,11 +222,46 @@ def generate_bracket(teams):
         teams_in_round //= 2
         round_index += 1
 
-    return {
-        "total_real_teams": original_team_count,
+    bracket = {
+        "total_teams": original_team_count,
         "bracket_size": bracket_size,
         "rounds": rounds,
+        "champion": None,
     }
+
+    advance_bye_winners(bracket)
+
+    return bracket
+
+
+def advance_bye_winners(bracket):
+    rounds = bracket.get("rounds", [])
+
+    for round_index, round_data in enumerate(rounds):
+        is_final_round = round_index == len(rounds) - 1
+
+        for match_index, match in enumerate(round_data.get("matches", [])):
+            winner = match.get("winner")
+
+            if not winner:
+                continue
+
+            if is_final_round:
+                bracket["champion"] = winner
+                continue
+
+            next_round_index = round_index + 1
+            next_match_index = match_index // 2
+
+            next_match = rounds[next_round_index]["matches"][next_match_index]
+
+            if match_index % 2 == 0:
+                if next_match.get("team_1") is None:
+                    next_match["team_1"] = winner
+            else:
+                if next_match.get("team_2") is None:
+                    next_match["team_2"] = winner
+
 
 @api.route("/hello", methods=["GET"])
 def handle_hello():
@@ -1057,6 +1103,8 @@ def create_tournament():
         price=data.get("price", 0),
         status=data.get("status", "open"),
         description=data.get("description"),
+        bracket=None,
+        bracket_generated_at=None,
     )
 
     db.session.add(tournament)
@@ -1092,6 +1140,8 @@ def update_tournament(tournament_id):
     db.session.commit()
 
     return jsonify(tournament.serialize()), 200
+
+
 @api.route("/tournaments/<int:tournament_id>/close", methods=["PUT"])
 def close_tournament(tournament_id):
     tournament = Tournament.query.get(tournament_id)
@@ -1099,13 +1149,157 @@ def close_tournament(tournament_id):
     if tournament is None:
         return jsonify({"error": "Tournament not found"}), 404
 
+    if tournament.status == "closed" and tournament.bracket:
+        return jsonify({
+            "message": "Tournament already closed. Bracket already generated.",
+            "tournament": tournament.serialize(),
+            "bracket": tournament.bracket,
+        }), 200
+
+    teams = build_tournament_teams(tournament_id)
+
+    if len(teams) < 2:
+        return jsonify({
+            "error": "No hay suficientes parejas para cerrar el torneo y generar el cuadro"
+        }), 400
+
+    bracket = generate_bracket(teams)
+
     tournament.status = "closed"
+    tournament.bracket = bracket
+    tournament.bracket_generated_at = datetime.now()
 
     db.session.commit()
 
     return jsonify({
-        "message": "Tournament registrations closed successfully",
-        "tournament": tournament.serialize()
+        "message": "Tournament closed and bracket generated successfully",
+        "tournament": tournament.serialize(),
+        "bracket": tournament.bracket,
+    }), 200
+
+
+@api.route("/tournaments/<int:tournament_id>/bracket", methods=["GET"])
+def get_tournament_bracket(tournament_id):
+    tournament = Tournament.query.get(tournament_id)
+
+    if tournament is None:
+        return jsonify({"error": "Tournament not found"}), 404
+
+    if tournament.status != "closed":
+        return jsonify({
+            "error": "El cuadro estará disponible cuando se cierren las inscripciones"
+        }), 403
+
+    if not tournament.bracket:
+        teams = build_tournament_teams(tournament_id)
+
+        if len(teams) < 2:
+            return jsonify({
+                "error": "No hay suficientes parejas para generar el cuadro"
+            }), 400
+
+        tournament.bracket = generate_bracket(teams)
+        tournament.bracket_generated_at = datetime.now()
+        db.session.commit()
+
+    return jsonify({
+        "tournament": tournament.serialize(),
+        "total_teams": tournament.bracket.get("total_teams", 0),
+        "bracket_size": tournament.bracket.get("bracket_size", 0),
+        "rounds": tournament.bracket.get("rounds", []),
+        "champion": tournament.bracket.get("champion"),
+        "bracket_generated_at": tournament.bracket_generated_at.isoformat()
+        if tournament.bracket_generated_at else None,
+    }), 200
+
+
+@api.route("/tournaments/<int:tournament_id>/bracket/matches/<match_id>/winner", methods=["PUT"])
+def update_bracket_match_winner(tournament_id, match_id):
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    winner_team_id = data.get("winner_team_id")
+
+    if not winner_team_id:
+        return jsonify({"error": "winner_team_id is required"}), 400
+
+    tournament = Tournament.query.get(tournament_id)
+
+    if tournament is None:
+        return jsonify({"error": "Tournament not found"}), 404
+
+    if tournament.status != "closed":
+        return jsonify({
+            "error": "Solo se pueden actualizar resultados cuando el torneo está cerrado"
+        }), 400
+
+    if not tournament.bracket:
+        return jsonify({"error": "El torneo no tiene cuadro generado"}), 400
+
+    bracket = tournament.bracket
+    rounds = bracket.get("rounds", [])
+
+    current_round_index = None
+    current_match_index = None
+    current_match = None
+
+    for round_index, round_data in enumerate(rounds):
+        for match_index, match in enumerate(round_data.get("matches", [])):
+            if match.get("match_id") == match_id:
+                current_round_index = round_index
+                current_match_index = match_index
+                current_match = match
+                break
+
+        if current_match:
+            break
+
+    if current_match is None:
+        return jsonify({"error": "Match not found in bracket"}), 404
+
+    team_1 = current_match.get("team_1")
+    team_2 = current_match.get("team_2")
+
+    valid_winner = None
+
+    if team_1 and team_1.get("team_id") == winner_team_id:
+        valid_winner = team_1
+
+    if team_2 and team_2.get("team_id") == winner_team_id:
+        valid_winner = team_2
+
+    if valid_winner is None:
+        return jsonify({
+            "error": "winner_team_id no pertenece a este partido"
+        }), 400
+
+    current_match["winner"] = valid_winner
+
+    is_final_round = current_round_index == len(rounds) - 1
+
+    if not is_final_round:
+        next_round_index = current_round_index + 1
+        next_match_index = current_match_index // 2
+
+        next_match = rounds[next_round_index]["matches"][next_match_index]
+
+        if current_match_index % 2 == 0:
+            next_match["team_1"] = valid_winner
+        else:
+            next_match["team_2"] = valid_winner
+    else:
+        bracket["champion"] = valid_winner
+
+    tournament.bracket = bracket
+    flag_modified(tournament, "bracket")
+    db.session.commit()
+
+    return jsonify({
+        "message": "Resultado actualizado correctamente",
+        "tournament": tournament.serialize(),
+        "bracket": tournament.bracket,
     }), 200
 
 
@@ -1213,34 +1407,6 @@ def join_tournament(tournament_id):
             partner.serialize(),
         ],
     }), 201
-
-@api.route("/tournaments/<int:tournament_id>/bracket", methods=["GET"])
-def get_tournament_bracket(tournament_id):
-    tournament = Tournament.query.get(tournament_id)
-
-    if tournament is None:
-        return jsonify({"error": "Tournament not found"}), 404
-
-    if tournament.status != "closed":
-        return jsonify({
-            "error": "El cuadro estará disponible cuando se cierren las inscripciones"
-        }), 403
-
-    teams = build_tournament_teams(tournament_id)
-
-    if len(teams) < 2:
-        return jsonify({
-            "error": "No hay suficientes parejas para generar el cuadro"
-        }), 400
-
-    bracket = generate_bracket(teams)
-
-    return jsonify({
-        "tournament": tournament.serialize(),
-        "total_teams": bracket["total_real_teams"],
-        "bracket_size": bracket["bracket_size"],
-        "rounds": bracket["rounds"],
-    }), 200
 
 
 # -------------------------
