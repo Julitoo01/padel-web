@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token
+import random
 
 from api.models import (
     db,
@@ -64,7 +65,157 @@ def get_or_create_ranking(user_id):
         db.session.flush()
 
     return ranking_player
+def build_tournament_teams(tournament_id):
+    registrations = TournamentRegistration.query.filter_by(
+        tournament_id=tournament_id
+    ).all()
 
+    used_user_ids = set()
+    teams = []
+
+    for registration in registrations:
+        if registration.user_id in used_user_ids:
+            continue
+
+        player_1 = User.query.get(registration.user_id)
+
+        if not player_1:
+            continue
+
+        player_1_name = player_1.name or player_1.email
+        partner_registration = None
+
+        for possible_partner in registrations:
+            if possible_partner.user_id == registration.user_id:
+                continue
+
+            if possible_partner.user_id in used_user_ids:
+                continue
+
+            possible_partner_user = User.query.get(possible_partner.user_id)
+
+            if not possible_partner_user:
+                continue
+
+            possible_partner_name = (
+                possible_partner_user.name or possible_partner_user.email
+            )
+
+            if (
+                registration.partner_name == possible_partner_name
+                and possible_partner.partner_name == player_1_name
+            ):
+                partner_registration = possible_partner
+                break
+
+        if partner_registration:
+            player_2 = User.query.get(partner_registration.user_id)
+
+            if not player_2:
+                continue
+
+            player_2_name = player_2.name or player_2.email
+
+            teams.append({
+                "team_id": f"{player_1.id}-{player_2.id}",
+                "player_1_id": player_1.id,
+                "player_1": player_1_name,
+                "player_2_id": player_2.id,
+                "player_2": player_2_name,
+                "label": f"{player_1_name} / {player_2_name}",
+                "status": registration.status,
+            })
+
+            used_user_ids.add(player_1.id)
+            used_user_ids.add(player_2.id)
+
+    return teams
+
+
+def next_power_of_two(number):
+    power = 1
+
+    while power < number:
+        power *= 2
+
+    return power
+
+
+def get_round_name(teams_in_round):
+    if teams_in_round == 2:
+        return "Final"
+
+    return f"1/{teams_in_round // 2}"
+
+
+def generate_bracket(teams):
+    shuffled_teams = teams[:]
+    random.shuffle(shuffled_teams)
+
+    original_team_count = len(shuffled_teams)
+    bracket_size = next_power_of_two(original_team_count)
+
+    while len(shuffled_teams) < bracket_size:
+        shuffled_teams.append({
+            "team_id": f"bye-{len(shuffled_teams)}",
+            "player_1_id": None,
+            "player_1": "BYE",
+            "player_2_id": None,
+            "player_2": "",
+            "label": "BYE",
+            "status": "bye",
+        })
+
+    rounds = []
+
+    first_round_matches = []
+    match_number = 1
+
+    for index in range(0, len(shuffled_teams), 2):
+        team_1 = shuffled_teams[index]
+        team_2 = shuffled_teams[index + 1]
+
+        first_round_matches.append({
+            "match_id": f"R1-M{match_number}",
+            "team_1": team_1,
+            "team_2": team_2,
+            "winner": None,
+        })
+
+        match_number += 1
+
+    rounds.append({
+        "name": get_round_name(bracket_size),
+        "matches": first_round_matches,
+    })
+
+    teams_in_round = bracket_size // 2
+    round_index = 2
+
+    while teams_in_round >= 2:
+        matches = []
+
+        for match_index in range(teams_in_round // 2):
+            matches.append({
+                "match_id": f"R{round_index}-M{match_index + 1}",
+                "team_1": None,
+                "team_2": None,
+                "winner": None,
+            })
+
+        rounds.append({
+            "name": get_round_name(teams_in_round),
+            "matches": matches,
+        })
+
+        teams_in_round //= 2
+        round_index += 1
+
+    return {
+        "total_real_teams": original_team_count,
+        "bracket_size": bracket_size,
+        "rounds": rounds,
+    }
 
 @api.route("/hello", methods=["GET"])
 def handle_hello():
@@ -941,6 +1092,21 @@ def update_tournament(tournament_id):
     db.session.commit()
 
     return jsonify(tournament.serialize()), 200
+@api.route("/tournaments/<int:tournament_id>/close", methods=["PUT"])
+def close_tournament(tournament_id):
+    tournament = Tournament.query.get(tournament_id)
+
+    if tournament is None:
+        return jsonify({"error": "Tournament not found"}), 404
+
+    tournament.status = "closed"
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Tournament registrations closed successfully",
+        "tournament": tournament.serialize()
+    }), 200
 
 
 @api.route("/tournaments/<int:tournament_id>", methods=["DELETE"])
@@ -1047,6 +1213,34 @@ def join_tournament(tournament_id):
             partner.serialize(),
         ],
     }), 201
+
+@api.route("/tournaments/<int:tournament_id>/bracket", methods=["GET"])
+def get_tournament_bracket(tournament_id):
+    tournament = Tournament.query.get(tournament_id)
+
+    if tournament is None:
+        return jsonify({"error": "Tournament not found"}), 404
+
+    if tournament.status != "closed":
+        return jsonify({
+            "error": "El cuadro estará disponible cuando se cierren las inscripciones"
+        }), 403
+
+    teams = build_tournament_teams(tournament_id)
+
+    if len(teams) < 2:
+        return jsonify({
+            "error": "No hay suficientes parejas para generar el cuadro"
+        }), 400
+
+    bracket = generate_bracket(teams)
+
+    return jsonify({
+        "tournament": tournament.serialize(),
+        "total_teams": bracket["total_real_teams"],
+        "bracket_size": bracket["bracket_size"],
+        "rounds": bracket["rounds"],
+    }), 200
 
 
 # -------------------------

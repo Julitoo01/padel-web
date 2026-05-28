@@ -7,6 +7,7 @@ export const Tournaments = () => {
   const [tournaments, setTournaments] = useState([]);
   const [users, setUsers] = useState([]);
   const [selectedTournament, setSelectedTournament] = useState(null);
+  const [selectedBracket, setSelectedBracket] = useState(null);
 
   const [formData, setFormData] = useState({
     partner_id: "",
@@ -14,6 +15,7 @@ export const Tournaments = () => {
 
   const [loading, setLoading] = useState(true);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [bracketLoading, setBracketLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -82,6 +84,7 @@ export const Tournaments = () => {
     }
 
     setSelectedTournament(tournament);
+    setSelectedBracket(null);
     setMessage("");
     setError("");
 
@@ -173,6 +176,32 @@ export const Tournaments = () => {
     }
   };
 
+  const getTournamentBracket = async (tournament) => {
+    try {
+      setBracketLoading(true);
+      setError("");
+      setMessage("");
+      setSelectedTournament(null);
+
+      const response = await fetch(
+        `${backendUrl}/api/tournaments/${tournament.id}/bracket`
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo cargar el cuadro");
+      }
+
+      setSelectedBracket(data);
+    } catch (error) {
+      console.error(error);
+      setError(error.message || "No se pudo cargar el cuadro");
+    } finally {
+      setBracketLoading(false);
+    }
+  };
+
   const loggedUser = getLoggedUser();
 
   const availablePartners = users.filter(
@@ -184,8 +213,8 @@ export const Tournaments = () => {
       <h1 className="fw-bold mb-3">Torneos</h1>
 
       <p className="text-muted">
-        Consulta los torneos disponibles e inscribe a tu pareja. Ambos jugadores
-        deben tener cuenta registrada.
+        Consulta los torneos disponibles e inscribe a tu pareja. Los inscritos
+        no se mostrarán hasta que se cierren las inscripciones.
       </p>
 
       {!loggedUser && (
@@ -263,38 +292,140 @@ export const Tournaments = () => {
 
                   <p className="mt-auto">
                     <strong>Estado:</strong>{" "}
-                    {isFull ? (
+                    {isClosed ? (
+                      <span className="badge bg-secondary">Cerrado</span>
+                    ) : isFull ? (
                       <span className="badge bg-danger">Completo</span>
                     ) : !hasEnoughPlaces ? (
                       <span className="badge bg-warning text-dark">
                         Solo queda 1 plaza
                       </span>
-                    ) : isClosed ? (
-                      <span className="badge bg-secondary">Cerrado</span>
                     ) : (
                       <span className="badge bg-success">Abierto</span>
                     )}
                   </p>
 
-                  <button
-                    className="btn btn-success w-100"
-                    disabled={!canRegister}
-                    onClick={() => openRegistrationForm(tournament)}
-                  >
-                    {isFull
-                      ? "Completo"
-                      : !hasEnoughPlaces
-                      ? "No hay plazas para pareja"
-                      : isClosed
-                      ? "Cerrado"
-                      : "Inscribir pareja"}
-                  </button>
+                  {isClosed ? (
+                    <button
+                      className="btn btn-outline-dark w-100"
+                      onClick={() => getTournamentBracket(tournament)}
+                    >
+                      Ver cuadro
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-success w-100"
+                      disabled={!canRegister}
+                      onClick={() => openRegistrationForm(tournament)}
+                    >
+                      {isFull
+                        ? "Completo"
+                        : !hasEnoughPlaces
+                        ? "No hay plazas para pareja"
+                        : "Inscribir pareja"}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
           );
         })}
       </div>
+
+      {bracketLoading && <p className="mt-4">Cargando cuadro...</p>}
+
+      {selectedBracket && (
+  <div className="card shadow-sm mt-5">
+    <div className="card-body">
+      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div>
+          <h3 className="fw-bold mb-1">
+            Cuadro de {selectedBracket.tournament.name}
+          </h3>
+
+          <p className="text-muted mb-0">
+            Sorteo aleatorio de parejas. Total parejas:{" "}
+            {selectedBracket.total_teams}
+          </p>
+        </div>
+
+        <button
+          className="btn btn-outline-secondary btn-sm"
+          onClick={() => setSelectedBracket(null)}
+        >
+          Cerrar
+        </button>
+      </div>
+
+      {!selectedBracket.rounds || selectedBracket.rounds.length === 0 ? (
+        <div className="alert alert-warning">
+          No hay cuadro generado para este torneo.
+        </div>
+      ) : (
+        <div
+          className="d-flex gap-4 overflow-auto pb-3"
+          style={{ alignItems: "flex-start" }}
+        >
+          {selectedBracket.rounds.map((round, roundIndex) => (
+            <div key={roundIndex} style={{ minWidth: "250px" }}>
+              <div className="text-center fw-bold mb-3 bg-danger text-white py-2 rounded">
+                {round.name}
+              </div>
+
+              <div className="d-flex flex-column gap-3">
+                {round.matches.map((match, matchIndex) => (
+                  <div
+                    key={match.match_id || matchIndex}
+                    className="border rounded p-2 bg-light shadow-sm"
+                  >
+                    <div className="small text-muted mb-2">
+                      Partido {matchIndex + 1}
+                    </div>
+
+                    <div className="border rounded p-2 mb-2 bg-white">
+                      {match.team_1 ? (
+                        match.team_1.status === "bye" ? (
+                          <div className="text-muted">BYE</div>
+                        ) : (
+                          <>
+                            <div>{match.team_1.player_1}</div>
+                            <div>{match.team_1.player_2}</div>
+                          </>
+                        )
+                      ) : (
+                        <div className="text-muted">Pendiente</div>
+                      )}
+                    </div>
+
+                    <div className="border rounded p-2 bg-white">
+                      {match.team_2 ? (
+                        match.team_2.status === "bye" ? (
+                          <div className="text-muted">BYE</div>
+                        ) : (
+                          <>
+                            <div>{match.team_2.player_1}</div>
+                            <div>{match.team_2.player_2}</div>
+                          </>
+                        )
+                      ) : (
+                        <div className="text-muted">Pendiente</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="alert alert-warning mt-4 mb-0">
+        Este cuadro es aleatorio y puede cambiar si vuelves a pulsar “Ver cuadro”.
+        Luego podemos hacer que se genere una sola vez y quede guardado.
+      </div>
+    </div>
+  </div>
+)}
 
       {selectedTournament && (
         <div className="card shadow-sm mt-5">
