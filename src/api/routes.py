@@ -1484,10 +1484,57 @@ def join_tournament(tournament_id):
 # RANKING
 # -------------------------
 
+# -------------------------
+# RANKING
+# -------------------------
+
 @api.route("/ranking", methods=["GET"])
 def get_ranking():
-    ranking = Ranking.query.order_by(Ranking.points.desc()).all()
-    return jsonify([item.serialize() for item in ranking]), 200
+    ranking_players = Ranking.query.all()
+
+    def ranking_sort_key(player):
+        matches_played = player.matches_played or 0
+        wins = player.wins or 0
+
+        win_ratio = wins / matches_played if matches_played > 0 else 0
+        is_eligible = matches_played >= 5
+
+        return (
+            1 if is_eligible else 0,
+            win_ratio,
+            wins,
+            matches_played,
+        )
+
+    ranking_players = sorted(
+        ranking_players,
+        key=ranking_sort_key,
+        reverse=True,
+    )
+
+    result = []
+
+    for player in ranking_players:
+        matches_played = player.matches_played or 0
+        wins = player.wins or 0
+        losses = player.losses or 0
+
+        win_ratio = round((wins / matches_played) * 100) if matches_played > 0 else 0
+        is_eligible = matches_played >= 5
+
+        result.append({
+            "id": player.id,
+            "user_id": player.user_id,
+            "player": player.user.name if player.user and player.user.name else player.user.email if player.user else None,
+            "matches_played": matches_played,
+            "wins": wins,
+            "losses": losses,
+            "win_ratio": win_ratio,
+            "is_eligible": is_eligible,
+            "minimum_matches_required": 5,
+        })
+
+    return jsonify(result), 200
 
 
 @api.route("/ranking", methods=["POST"])
@@ -1512,7 +1559,7 @@ def create_ranking_player():
 
     ranking_player = Ranking(
         user_id=data.get("user_id"),
-        points=data.get("points", 0),
+        points=0,
         matches_played=data.get("matches_played", 0),
         wins=data.get("wins", 0),
         losses=data.get("losses", 0),
@@ -1552,6 +1599,43 @@ def sync_ranking():
     }), 200
 
 
+@api.route("/ranking/reset", methods=["POST"])
+def reset_ranking():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    admin_id = data.get("admin_id")
+
+    if not admin_id:
+        return jsonify({"error": "admin_id is required"}), 400
+
+    admin_user = User.query.get(admin_id)
+
+    if admin_user is None:
+        return jsonify({"error": "Admin user not found"}), 404
+
+    if admin_user.role != "admin":
+        return jsonify({
+            "error": "Solo el admin puede resetear el ranking"
+        }), 403
+
+    ranking_players = Ranking.query.all()
+
+    for player in ranking_players:
+        player.points = 0
+        player.matches_played = 0
+        player.wins = 0
+        player.losses = 0
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Ranking reseteado correctamente"
+    }), 200
+
+
 @api.route("/ranking/<int:ranking_id>", methods=["PUT"])
 def update_ranking_player(ranking_id):
     ranking_player = Ranking.query.get(ranking_id)
@@ -1564,7 +1648,7 @@ def update_ranking_player(ranking_id):
     if not data:
         return jsonify({"error": "Missing JSON body"}), 400
 
-    ranking_player.points = data.get("points", ranking_player.points)
+    ranking_player.points = 0
     ranking_player.matches_played = data.get(
         "matches_played",
         ranking_player.matches_played,
@@ -1589,6 +1673,9 @@ def delete_ranking_player(ranking_id):
 
     return jsonify({"message": "Ranking player deleted successfully"}), 200
 
+# -------------------------
+# MATCH RESULTS
+# -------------------------
 
 # -------------------------
 # MATCH RESULTS
@@ -1602,6 +1689,7 @@ def upload_match_result():
         return jsonify({"error": "Missing JSON body"}), 400
 
     required_fields = [
+        "submitted_by",
         "team1_drive_id",
         "team1_left_id",
         "team2_drive_id",
@@ -1616,6 +1704,8 @@ def upload_match_result():
         if data.get(field) is None or data.get(field) == "":
             return jsonify({"error": f"{field} is required"}), 400
 
+    submitted_by = int(data.get("submitted_by"))
+
     team1_drive_id = int(data.get("team1_drive_id"))
     team1_left_id = int(data.get("team1_left_id"))
     team2_drive_id = int(data.get("team2_drive_id"))
@@ -1628,6 +1718,11 @@ def upload_match_result():
         team2_left_id,
     ]
 
+    if submitted_by not in player_ids:
+        return jsonify({
+            "error": "Solo un jugador del partido puede subir el resultado"
+        }), 403
+
     if len(player_ids) != len(set(player_ids)):
         return jsonify({
             "error": "No puedes repetir jugadores en el mismo partido"
@@ -1637,6 +1732,11 @@ def upload_match_result():
 
     if len(players) != 4:
         return jsonify({"error": "Alguno de los jugadores no existe"}), 404
+
+    submitted_user = User.query.get(submitted_by)
+
+    if submitted_user is None:
+        return jsonify({"error": "El usuario que sube el resultado no existe"}), 404
 
     set1_team1 = int(data.get("set1_team1"))
     set1_team2 = int(data.get("set1_team2"))
@@ -1692,13 +1792,13 @@ def upload_match_result():
 
     for user_id in winner_ids:
         ranking_player = get_or_create_ranking(user_id)
-        ranking_player.points += 10
+        ranking_player.points = 0
         ranking_player.matches_played += 1
         ranking_player.wins += 1
 
     for user_id in loser_ids:
         ranking_player = get_or_create_ranking(user_id)
-        ranking_player.points += 2
+        ranking_player.points = 0
         ranking_player.matches_played += 1
         ranking_player.losses += 1
 
@@ -1706,6 +1806,7 @@ def upload_match_result():
 
     return jsonify({
         "message": "Resultado subido correctamente",
+        "submitted_by": submitted_by,
         "winner_team": winner_team,
         "team1_sets": team1_sets,
         "team2_sets": team2_sets,
