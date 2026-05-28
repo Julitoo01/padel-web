@@ -1221,9 +1221,23 @@ def update_bracket_match_winner(tournament_id, match_id):
         return jsonify({"error": "Missing JSON body"}), 400
 
     winner_team_id = data.get("winner_team_id")
+    admin_id = data.get("admin_id")
 
     if not winner_team_id:
         return jsonify({"error": "winner_team_id is required"}), 400
+
+    if not admin_id:
+        return jsonify({"error": "admin_id is required"}), 400
+
+    admin_user = User.query.get(admin_id)
+
+    if admin_user is None:
+        return jsonify({"error": "Admin user not found"}), 404
+
+    if admin_user.role != "admin":
+        return jsonify({
+            "error": "Solo el admin puede introducir resultados del torneo"
+        }), 403
 
     tournament = Tournament.query.get(tournament_id)
 

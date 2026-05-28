@@ -202,6 +202,64 @@ export const Tournaments = () => {
     }
   };
 
+  const handleSetWinner = async (matchId, winnerTeamId) => {
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión");
+      navigate("/login");
+      return;
+    }
+
+    if (loggedUser.role !== "admin") {
+      setError("Solo el admin puede introducir resultados del torneo");
+      return;
+    }
+
+    if (!selectedBracket?.tournament?.id) {
+      setError("No hay cuadro seleccionado");
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+
+      const response = await fetch(
+        `${backendUrl}/api/tournaments/${selectedBracket.tournament.id}/bracket/matches/${matchId}/winner`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            winner_team_id: winnerTeamId,
+            admin_id: loggedUser.id,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo guardar el ganador");
+      }
+
+      setMessage("Resultado guardado correctamente");
+
+      setSelectedBracket({
+        ...selectedBracket,
+        rounds: data.bracket.rounds,
+        champion: data.bracket.champion,
+      });
+
+      getTournaments();
+    } catch (error) {
+      console.error(error);
+      setError(error.message || "No se pudo guardar el resultado");
+    }
+  };
+
   const loggedUser = getLoggedUser();
 
   const availablePartners = users.filter(
@@ -227,6 +285,9 @@ export const Tournaments = () => {
         <div className="alert alert-info">
           Jugador principal:{" "}
           <strong>{loggedUser.name || loggedUser.email}</strong>
+          {loggedUser.role === "admin" && (
+            <span className="badge bg-dark ms-2">Admin</span>
+          )}
         </div>
       )}
 
@@ -335,97 +396,164 @@ export const Tournaments = () => {
       {bracketLoading && <p className="mt-4">Cargando cuadro...</p>}
 
       {selectedBracket && (
-  <div className="card shadow-sm mt-5">
-    <div className="card-body">
-      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <div>
-          <h3 className="fw-bold mb-1">
-            Cuadro de {selectedBracket.tournament.name}
-          </h3>
+        <div className="card shadow-sm mt-5">
+          <div className="card-body">
+            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+              <div>
+                <h3 className="fw-bold mb-1">
+                  Cuadro de {selectedBracket.tournament.name}
+                </h3>
 
-          <p className="text-muted mb-0">
-            Sorteo aleatorio de parejas. Total parejas:{" "}
-            {selectedBracket.total_teams}
-          </p>
-        </div>
+                <p className="text-muted mb-0">
+                  Cuadro fijo generado al cerrar inscripciones. Total parejas:{" "}
+                  {selectedBracket.total_teams}
+                </p>
 
-        <button
-          className="btn btn-outline-secondary btn-sm"
-          onClick={() => setSelectedBracket(null)}
-        >
-          Cerrar
-        </button>
-      </div>
-
-      {!selectedBracket.rounds || selectedBracket.rounds.length === 0 ? (
-        <div className="alert alert-warning">
-          No hay cuadro generado para este torneo.
-        </div>
-      ) : (
-        <div
-          className="d-flex gap-4 overflow-auto pb-3"
-          style={{ alignItems: "flex-start" }}
-        >
-          {selectedBracket.rounds.map((round, roundIndex) => (
-            <div key={roundIndex} style={{ minWidth: "250px" }}>
-              <div className="text-center fw-bold mb-3 bg-danger text-white py-2 rounded">
-                {round.name}
+                {selectedBracket.champion && (
+                  <div className="alert alert-success mt-3 mb-0">
+                    🏆 Campeones:{" "}
+                    <strong>{selectedBracket.champion.label}</strong>
+                  </div>
+                )}
               </div>
 
-              <div className="d-flex flex-column gap-3">
-                {round.matches.map((match, matchIndex) => (
-                  <div
-                    key={match.match_id || matchIndex}
-                    className="border rounded p-2 bg-light shadow-sm"
-                  >
-                    <div className="small text-muted mb-2">
-                      Partido {matchIndex + 1}
+              <button
+                className="btn btn-outline-secondary btn-sm"
+                onClick={() => setSelectedBracket(null)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {!selectedBracket.rounds || selectedBracket.rounds.length === 0 ? (
+              <div className="alert alert-warning">
+                No hay cuadro generado para este torneo.
+              </div>
+            ) : (
+              <div
+                className="d-flex gap-4 overflow-auto pb-3"
+                style={{ alignItems: "flex-start" }}
+              >
+                {selectedBracket.rounds.map((round, roundIndex) => (
+                  <div key={roundIndex} style={{ minWidth: "260px" }}>
+                    <div className="text-center fw-bold mb-3 bg-danger text-white py-2 rounded">
+                      {round.name}
                     </div>
 
-                    <div className="border rounded p-2 mb-2 bg-white">
-                      {match.team_1 ? (
-                        match.team_1.status === "bye" ? (
-                          <div className="text-muted">BYE</div>
-                        ) : (
-                          <>
-                            <div>{match.team_1.player_1}</div>
-                            <div>{match.team_1.player_2}</div>
-                          </>
-                        )
-                      ) : (
-                        <div className="text-muted">Pendiente</div>
-                      )}
-                    </div>
+                    <div className="d-flex flex-column gap-3">
+                      {round.matches.map((match, matchIndex) => (
+                        <div
+                          key={match.match_id || matchIndex}
+                          className="border rounded p-2 bg-light shadow-sm"
+                        >
+                          <div className="small text-muted mb-2">
+                            Partido {matchIndex + 1}
+                          </div>
 
-                    <div className="border rounded p-2 bg-white">
-                      {match.team_2 ? (
-                        match.team_2.status === "bye" ? (
-                          <div className="text-muted">BYE</div>
-                        ) : (
-                          <>
-                            <div>{match.team_2.player_1}</div>
-                            <div>{match.team_2.player_2}</div>
-                          </>
-                        )
-                      ) : (
-                        <div className="text-muted">Pendiente</div>
-                      )}
+                          <div
+                            className={
+                              match.winner?.team_id === match.team_1?.team_id
+                                ? "border border-success rounded p-2 mb-2 bg-white"
+                                : "border rounded p-2 mb-2 bg-white"
+                            }
+                          >
+                            {match.team_1 ? (
+                              match.team_1.status === "bye" ? (
+                                <div className="text-muted">BYE</div>
+                              ) : (
+                                <>
+                                  <div>{match.team_1.player_1}</div>
+                                  <div>{match.team_1.player_2}</div>
+
+                                  {loggedUser?.role === "admin" &&
+                                    !match.winner &&
+                                    match.team_2 && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-success btn-sm mt-2"
+                                        onClick={() =>
+                                          handleSetWinner(
+                                            match.match_id,
+                                            match.team_1.team_id
+                                          )
+                                        }
+                                      >
+                                        Gana esta pareja
+                                      </button>
+                                    )}
+
+                                  {match.winner?.team_id ===
+                                    match.team_1.team_id && (
+                                    <div className="badge bg-success mt-2">
+                                      Ganador
+                                    </div>
+                                  )}
+                                </>
+                              )
+                            ) : (
+                              <div className="text-muted">Pendiente</div>
+                            )}
+                          </div>
+
+                          <div
+                            className={
+                              match.winner?.team_id === match.team_2?.team_id
+                                ? "border border-success rounded p-2 bg-white"
+                                : "border rounded p-2 bg-white"
+                            }
+                          >
+                            {match.team_2 ? (
+                              match.team_2.status === "bye" ? (
+                                <div className="text-muted">BYE</div>
+                              ) : (
+                                <>
+                                  <div>{match.team_2.player_1}</div>
+                                  <div>{match.team_2.player_2}</div>
+
+                                  {loggedUser?.role === "admin" &&
+                                    !match.winner &&
+                                    match.team_1 && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-success btn-sm mt-2"
+                                        onClick={() =>
+                                          handleSetWinner(
+                                            match.match_id,
+                                            match.team_2.team_id
+                                          )
+                                        }
+                                      >
+                                        Gana esta pareja
+                                      </button>
+                                    )}
+
+                                  {match.winner?.team_id ===
+                                    match.team_2.team_id && (
+                                    <div className="badge bg-success mt-2">
+                                      Ganador
+                                    </div>
+                                  )}
+                                </>
+                              )
+                            ) : (
+                              <div className="text-muted">Pendiente</div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
+            )}
+
+            <div className="alert alert-info mt-4 mb-0">
+              Solo el admin puede introducir resultados. El cuadro queda
+              guardado y no cambia al volver a abrirlo.
             </div>
-          ))}
+          </div>
         </div>
       )}
-
-      <div className="alert alert-warning mt-4 mb-0">
-        Este cuadro es aleatorio y puede cambiar si vuelves a pulsar “Ver cuadro”.
-        Luego podemos hacer que se genere una sola vez y quede guardado.
-      </div>
-    </div>
-  </div>
-)}
 
       {selectedTournament && (
         <div className="card shadow-sm mt-5">
