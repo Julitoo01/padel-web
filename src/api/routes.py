@@ -1143,6 +1143,26 @@ def update_tournament(tournament_id):
     if not data:
         return jsonify({"error": "Missing JSON body"}), 400
 
+    admin_id = data.get("admin_id")
+
+    if not admin_id:
+        return jsonify({"error": "admin_id is required"}), 400
+
+    admin_user = User.query.get(admin_id)
+
+    if admin_user is None:
+        return jsonify({"error": "Admin user not found"}), 404
+
+    if admin_user.role != "admin":
+        return jsonify({
+            "error": "Solo el admin puede editar torneos"
+        }), 403
+
+    if tournament.status == "closed":
+        return jsonify({
+            "error": "Los torneos cerrados no se pueden editar"
+        }), 400
+
     tournament.name = data.get("name", tournament.name)
 
     if data.get("date"):
@@ -1152,12 +1172,15 @@ def update_tournament(tournament_id):
     tournament.level = data.get("level", tournament.level)
     tournament.max_players = data.get("max_players", tournament.max_players)
     tournament.price = data.get("price", tournament.price)
-    tournament.status = data.get("status", tournament.status)
+    tournament.status = "open"
     tournament.description = data.get("description", tournament.description)
 
     db.session.commit()
 
-    return jsonify(tournament.serialize()), 200
+    return jsonify({
+        "message": "Torneo actualizado correctamente",
+        "tournament": tournament.serialize(),
+    }), 200
 
 
 @api.route("/tournaments/<int:tournament_id>/close", methods=["PUT"])
@@ -1334,7 +1357,6 @@ def update_bracket_match_winner(tournament_id, match_id):
         "bracket": tournament.bracket,
     }), 200
 
-
 @api.route("/tournaments/<int:tournament_id>", methods=["DELETE"])
 def delete_tournament(tournament_id):
     tournament = Tournament.query.get(tournament_id)
@@ -1342,10 +1364,27 @@ def delete_tournament(tournament_id):
     if tournament is None:
         return jsonify({"error": "Tournament not found"}), 404
 
+    data = request.get_json() or {}
+
+    admin_id = data.get("admin_id")
+
+    if not admin_id:
+        return jsonify({"error": "admin_id is required"}), 400
+
+    admin_user = User.query.get(admin_id)
+
+    if admin_user is None:
+        return jsonify({"error": "Admin user not found"}), 404
+
+    if admin_user.role != "admin":
+        return jsonify({
+            "error": "Solo el admin puede eliminar torneos"
+        }), 403
+
     db.session.delete(tournament)
     db.session.commit()
 
-    return jsonify({"message": "Tournament deleted successfully"}), 200
+    return jsonify({"message": "Torneo eliminado correctamente"}), 200
 
 
 @api.route("/tournaments/<int:tournament_id>/join", methods=["POST"])

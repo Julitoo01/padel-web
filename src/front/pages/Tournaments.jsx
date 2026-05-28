@@ -8,6 +8,7 @@ export const Tournaments = () => {
   const [users, setUsers] = useState([]);
   const [selectedTournament, setSelectedTournament] = useState(null);
   const [selectedBracket, setSelectedBracket] = useState(null);
+  const [editingTournament, setEditingTournament] = useState(null);
 
   const [formData, setFormData] = useState({
     partner_id: "",
@@ -21,6 +22,17 @@ export const Tournaments = () => {
     max_players: 16,
     price: 12,
     description: "",
+  });
+
+  const [editTournamentData, setEditTournamentData] = useState({
+    name: "",
+    date: "",
+    category: "Mixto",
+    level: "Intermedio",
+    max_players: 16,
+    price: 12,
+    description: "",
+    status: "open",
   });
 
   const [loading, setLoading] = useState(true);
@@ -95,6 +107,7 @@ export const Tournaments = () => {
 
     setSelectedTournament(tournament);
     setSelectedBracket(null);
+    setEditingTournament(null);
     setMessage("");
     setError("");
 
@@ -127,6 +140,15 @@ export const Tournaments = () => {
 
     setCreateTournamentData({
       ...createTournamentData,
+      [name]: value,
+    });
+  };
+
+  const handleEditTournamentChange = (event) => {
+    const { name, value } = event.target;
+
+    setEditTournamentData({
+      ...editTournamentData,
       [name]: value,
     });
   };
@@ -190,6 +212,162 @@ export const Tournaments = () => {
     } catch (error) {
       console.error(error);
       setError(error.message || "No se pudo crear el torneo");
+    }
+  };
+
+  const openEditTournamentForm = (tournament) => {
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser || loggedUser.role !== "admin") {
+      setError("Solo el admin puede editar torneos");
+      return;
+    }
+
+    if (tournament.status === "closed") {
+      setError("Los torneos cerrados no se pueden editar");
+      return;
+    }
+
+    setEditingTournament(tournament);
+    setSelectedTournament(null);
+    setSelectedBracket(null);
+    setMessage("");
+    setError("");
+
+    setEditTournamentData({
+      name: tournament.name || "",
+      date: tournament.date || "",
+      category: tournament.category || "Mixto",
+      level: tournament.level || "Intermedio",
+      max_players: tournament.max_players || 16,
+      price: tournament.price || 12,
+      description: tournament.description || "",
+      status: tournament.status || "open",
+    });
+  };
+
+  const closeEditTournamentForm = () => {
+    setEditingTournament(null);
+
+    setEditTournamentData({
+      name: "",
+      date: "",
+      category: "Mixto",
+      level: "Intermedio",
+      max_players: 16,
+      price: 12,
+      description: "",
+      status: "open",
+    });
+  };
+
+  const handleUpdateTournament = async (event) => {
+    event.preventDefault();
+
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser || loggedUser.role !== "admin") {
+      setError("Solo el admin puede editar torneos");
+      return;
+    }
+
+    if (!editingTournament) {
+      setError("No hay torneo seleccionado para editar");
+      return;
+    }
+
+    if (editingTournament.status === "closed") {
+      setError("Los torneos cerrados no se pueden editar");
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+
+      const response = await fetch(
+        `${backendUrl}/api/tournaments/${editingTournament.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            admin_id: loggedUser.id,
+            name: editTournamentData.name,
+            date: editTournamentData.date,
+            category: editTournamentData.category,
+            level: editTournamentData.level,
+            max_players: Number(editTournamentData.max_players),
+            price: Number(editTournamentData.price),
+            description: editTournamentData.description,
+            status: "open",
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo actualizar el torneo");
+      }
+
+      setMessage("Torneo actualizado correctamente");
+      closeEditTournamentForm();
+      getTournaments();
+    } catch (error) {
+      console.error(error);
+      setError(error.message || "No se pudo actualizar el torneo");
+    }
+  };
+
+  const handleDeleteTournament = async (tournament) => {
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser || loggedUser.role !== "admin") {
+      setError("Solo el admin puede eliminar torneos");
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `¿Seguro que quieres eliminar el torneo "${tournament.name}"? Esta acción no se puede deshacer.`
+    );
+
+    if (!confirmDelete) {
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+      setSelectedTournament(null);
+      setSelectedBracket(null);
+      setEditingTournament(null);
+
+      const response = await fetch(
+        `${backendUrl}/api/tournaments/${tournament.id}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            admin_id: loggedUser.id,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo eliminar el torneo");
+      }
+
+      setMessage("Torneo eliminado correctamente");
+      getTournaments();
+    } catch (error) {
+      console.error(error);
+      setError(error.message || "No se pudo eliminar el torneo");
     }
   };
 
@@ -263,6 +441,7 @@ export const Tournaments = () => {
       setError("");
       setMessage("");
       setSelectedTournament(null);
+      setEditingTournament(null);
 
       const response = await fetch(
         `${backendUrl}/api/tournaments/${tournament.id}/bracket`
@@ -368,6 +547,7 @@ export const Tournaments = () => {
       setMessage("");
       setSelectedTournament(null);
       setSelectedBracket(null);
+      setEditingTournament(null);
 
       const response = await fetch(
         `${backendUrl}/api/tournaments/${tournamentId}/close`,
@@ -653,6 +833,26 @@ export const Tournaments = () => {
                       )}
                     </>
                   )}
+
+                  {loggedUser?.role === "admin" && (
+                    <div className="mt-2">
+                      {tournament.status === "open" && (
+                        <button
+                          className="btn btn-outline-primary w-100 mb-2"
+                          onClick={() => openEditTournamentForm(tournament)}
+                        >
+                          Editar torneo
+                        </button>
+                      )}
+
+                      <button
+                        className="btn btn-outline-danger w-100"
+                        onClick={() => handleDeleteTournament(tournament)}
+                      >
+                        Eliminar torneo
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -818,6 +1018,130 @@ export const Tournaments = () => {
               Solo el admin puede introducir resultados. El cuadro queda
               guardado y no cambia al volver a abrirlo.
             </div>
+          </div>
+        </div>
+      )}
+
+      {editingTournament && (
+        <div className="card shadow-sm mt-5">
+          <div className="card-body">
+            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+              <div>
+                <h3 className="fw-bold mb-1">
+                  Editar torneo: {editingTournament.name}
+                </h3>
+                <p className="text-muted mb-0">
+                  Solo se pueden editar torneos abiertos.
+                </p>
+              </div>
+
+              <button
+                className="btn btn-outline-secondary btn-sm"
+                onClick={closeEditTournamentForm}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateTournament}>
+              <div className="row g-3">
+                <div className="col-md-6">
+                  <label className="form-label">Nombre del torneo</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    name="name"
+                    value={editTournamentData.name}
+                    onChange={handleEditTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-md-3">
+                  <label className="form-label">Fecha</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    name="date"
+                    value={editTournamentData.date}
+                    onChange={handleEditTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-md-3">
+                  <label className="form-label">Precio</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    name="price"
+                    value={editTournamentData.price}
+                    onChange={handleEditTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-md-4">
+                  <label className="form-label">Categoría</label>
+                  <select
+                    className="form-select"
+                    name="category"
+                    value={editTournamentData.category}
+                    onChange={handleEditTournamentChange}
+                    required
+                  >
+                    <option value="Mixto">Mixto</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Femenino">Femenino</option>
+                  </select>
+                </div>
+
+                <div className="col-md-4">
+                  <label className="form-label">Nivel</label>
+                  <select
+                    className="form-select"
+                    name="level"
+                    value={editTournamentData.level}
+                    onChange={handleEditTournamentChange}
+                    required
+                  >
+                    <option value="Iniciación">Iniciación</option>
+                    <option value="Intermedio">Intermedio</option>
+                    <option value="Avanzado">Avanzado</option>
+                    <option value="Competición">Competición</option>
+                  </select>
+                </div>
+
+                <div className="col-md-4">
+                  <label className="form-label">Máximo jugadores</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    name="max_players"
+                    min="4"
+                    step="2"
+                    value={editTournamentData.max_players}
+                    onChange={handleEditTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-12">
+                  <label className="form-label">Descripción</label>
+                  <textarea
+                    className="form-control"
+                    name="description"
+                    rows="3"
+                    value={editTournamentData.description}
+                    onChange={handleEditTournamentChange}
+                  />
+                </div>
+              </div>
+
+              <button className="btn btn-primary mt-4" type="submit">
+                Guardar cambios
+              </button>
+            </form>
           </div>
         </div>
       )}
