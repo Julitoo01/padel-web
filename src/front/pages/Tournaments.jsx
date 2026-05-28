@@ -13,6 +13,16 @@ export const Tournaments = () => {
     partner_id: "",
   });
 
+  const [createTournamentData, setCreateTournamentData] = useState({
+    name: "",
+    date: "",
+    category: "Mixto",
+    level: "Intermedio",
+    max_players: 16,
+    price: 12,
+    description: "",
+  });
+
   const [loading, setLoading] = useState(true);
   const [usersLoading, setUsersLoading] = useState(false);
   const [bracketLoading, setBracketLoading] = useState(false);
@@ -110,6 +120,77 @@ export const Tournaments = () => {
       ...formData,
       [name]: value,
     });
+  };
+
+  const handleCreateTournamentChange = (event) => {
+    const { name, value } = event.target;
+
+    setCreateTournamentData({
+      ...createTournamentData,
+      [name]: value,
+    });
+  };
+
+  const handleCreateTournament = async (event) => {
+    event.preventDefault();
+
+    const loggedUser = getLoggedUser();
+
+    if (!loggedUser) {
+      setError("Debes iniciar sesión");
+      navigate("/login");
+      return;
+    }
+
+    if (loggedUser.role !== "admin") {
+      setError("Solo el admin puede crear torneos");
+      return;
+    }
+
+    try {
+      setError("");
+      setMessage("");
+
+      const response = await fetch(`${backendUrl}/api/tournaments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          admin_id: loggedUser.id,
+          name: createTournamentData.name,
+          date: createTournamentData.date,
+          category: createTournamentData.category,
+          level: createTournamentData.level,
+          max_players: Number(createTournamentData.max_players),
+          price: Number(createTournamentData.price),
+          description: createTournamentData.description,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo crear el torneo");
+      }
+
+      setMessage("Torneo creado correctamente");
+
+      setCreateTournamentData({
+        name: "",
+        date: "",
+        category: "Mixto",
+        level: "Intermedio",
+        max_players: 16,
+        price: 12,
+        description: "",
+      });
+
+      getTournaments();
+    } catch (error) {
+      console.error(error);
+      setError(error.message || "No se pudo crear el torneo");
+    }
   };
 
   const handleTournamentRegistration = async (event) => {
@@ -300,6 +381,121 @@ export const Tournaments = () => {
       {!loading && tournaments.length === 0 && !error && (
         <div className="alert alert-warning">
           Todavía no hay torneos creados.
+        </div>
+      )}
+
+      {loggedUser?.role === "admin" && (
+        <div className="card shadow-sm mb-5">
+          <div className="card-body">
+            <h3 className="fw-bold mb-3">Crear nuevo torneo</h3>
+
+            <p className="text-muted">
+              Solo el admin puede crear torneos. El torneo se crea abierto para
+              inscripciones.
+            </p>
+
+            <form onSubmit={handleCreateTournament}>
+              <div className="row g-3">
+                <div className="col-md-6">
+                  <label className="form-label">Nombre del torneo</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    name="name"
+                    placeholder="Ej: Torneo Americano Viernes"
+                    value={createTournamentData.name}
+                    onChange={handleCreateTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-md-3">
+                  <label className="form-label">Fecha</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    name="date"
+                    value={createTournamentData.date}
+                    onChange={handleCreateTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-md-3">
+                  <label className="form-label">Precio</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    name="price"
+                    value={createTournamentData.price}
+                    onChange={handleCreateTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-md-4">
+                  <label className="form-label">Categoría</label>
+                  <select
+                    className="form-select"
+                    name="category"
+                    value={createTournamentData.category}
+                    onChange={handleCreateTournamentChange}
+                    required
+                  >
+                    <option value="Mixto">Mixto</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Femenino">Femenino</option>
+                  </select>
+                </div>
+
+                <div className="col-md-4">
+                  <label className="form-label">Nivel</label>
+                  <select
+                    className="form-select"
+                    name="level"
+                    value={createTournamentData.level}
+                    onChange={handleCreateTournamentChange}
+                    required
+                  >
+                    <option value="Iniciación">Iniciación</option>
+                    <option value="Intermedio">Intermedio</option>
+                    <option value="Avanzado">Avanzado</option>
+                    <option value="Competición">Competición</option>
+                  </select>
+                </div>
+
+                <div className="col-md-4">
+                  <label className="form-label">Máximo jugadores</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    name="max_players"
+                    min="4"
+                    step="2"
+                    value={createTournamentData.max_players}
+                    onChange={handleCreateTournamentChange}
+                    required
+                  />
+                </div>
+
+                <div className="col-12">
+                  <label className="form-label">Descripción</label>
+                  <textarea
+                    className="form-control"
+                    name="description"
+                    rows="3"
+                    placeholder="Ej: Torneo americano para jugadores de nivel intermedio."
+                    value={createTournamentData.description}
+                    onChange={handleCreateTournamentChange}
+                  />
+                </div>
+              </div>
+
+              <button className="btn btn-dark mt-4" type="submit">
+                Crear torneo
+              </button>
+            </form>
+          </div>
         </div>
       )}
 

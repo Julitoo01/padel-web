@@ -151,6 +151,35 @@ def get_round_name(teams_in_round):
     return f"1/{teams_in_round // 2}"
 
 
+def advance_bye_winners(bracket):
+    rounds = bracket.get("rounds", [])
+
+    for round_index, round_data in enumerate(rounds):
+        is_final_round = round_index == len(rounds) - 1
+
+        for match_index, match in enumerate(round_data.get("matches", [])):
+            winner = match.get("winner")
+
+            if not winner:
+                continue
+
+            if is_final_round:
+                bracket["champion"] = winner
+                continue
+
+            next_round_index = round_index + 1
+            next_match_index = match_index // 2
+
+            next_match = rounds[next_round_index]["matches"][next_match_index]
+
+            if match_index % 2 == 0:
+                if next_match.get("team_1") is None:
+                    next_match["team_1"] = winner
+            else:
+                if next_match.get("team_2") is None:
+                    next_match["team_2"] = winner
+
+
 def generate_bracket(teams):
     shuffled_teams = teams[:]
     random.shuffle(shuffled_teams)
@@ -232,35 +261,6 @@ def generate_bracket(teams):
     advance_bye_winners(bracket)
 
     return bracket
-
-
-def advance_bye_winners(bracket):
-    rounds = bracket.get("rounds", [])
-
-    for round_index, round_data in enumerate(rounds):
-        is_final_round = round_index == len(rounds) - 1
-
-        for match_index, match in enumerate(round_data.get("matches", [])):
-            winner = match.get("winner")
-
-            if not winner:
-                continue
-
-            if is_final_round:
-                bracket["champion"] = winner
-                continue
-
-            next_round_index = round_index + 1
-            next_match_index = match_index // 2
-
-            next_match = rounds[next_round_index]["matches"][next_match_index]
-
-            if match_index % 2 == 0:
-                if next_match.get("team_1") is None:
-                    next_match["team_1"] = winner
-            else:
-                if next_match.get("team_2") is None:
-                    next_match["team_2"] = winner
 
 
 @api.route("/hello", methods=["GET"])
@@ -1088,6 +1088,21 @@ def create_tournament():
     if not data:
         return jsonify({"error": "Missing JSON body"}), 400
 
+    admin_id = data.get("admin_id")
+
+    if not admin_id:
+        return jsonify({"error": "admin_id is required"}), 400
+
+    admin_user = User.query.get(admin_id)
+
+    if admin_user is None:
+        return jsonify({"error": "Admin user not found"}), 404
+
+    if admin_user.role != "admin":
+        return jsonify({
+            "error": "Solo el admin puede crear torneos"
+        }), 403
+
     required_fields = ["name", "date", "max_players"]
 
     for field in required_fields:
@@ -1101,7 +1116,7 @@ def create_tournament():
         level=data.get("level"),
         max_players=data.get("max_players"),
         price=data.get("price", 0),
-        status=data.get("status", "open"),
+        status="open",
         description=data.get("description"),
         bracket=None,
         bracket_generated_at=None,
@@ -1110,7 +1125,10 @@ def create_tournament():
     db.session.add(tournament)
     db.session.commit()
 
-    return jsonify(tournament.serialize()), 201
+    return jsonify({
+        "message": "Torneo creado correctamente",
+        "tournament": tournament.serialize(),
+    }), 201
 
 
 @api.route("/tournaments/<int:tournament_id>", methods=["PUT"])
