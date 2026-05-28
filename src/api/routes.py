@@ -313,8 +313,6 @@ def get_court_availability(court_id):
 
     week_start = selected_date - timedelta(days=selected_date.weekday())
 
-    # Bloques de 1h30 desde 16:00 hasta 02:30
-    # Si quieres terminar exactamente a las 03:00, se puede añadir 01:30 - 03:00
     court_slots = [
         ("16:00", "17:30"),
         ("17:30", "19:00"),
@@ -335,7 +333,6 @@ def get_court_availability(court_id):
             slot_start = parse_time(slot_start_string)
             slot_end = parse_time(slot_end_string)
 
-            # Las horas de madrugada pertenecen al día siguiente
             if slot_start_string in ["00:00", "00:30", "01:00", "01:30", "02:00"]:
                 slot_date = current_date + timedelta(days=1)
             else:
@@ -344,7 +341,6 @@ def get_court_availability(court_id):
             slot_start_datetime = datetime.combine(slot_date, slot_start)
             slot_end_datetime = datetime.combine(slot_date, slot_end)
 
-            # Si el slot cruza medianoche, la hora final es del día siguiente
             if slot_end <= slot_start:
                 slot_end_datetime = slot_end_datetime + timedelta(days=1)
 
@@ -845,7 +841,7 @@ def create_class_reservation():
         end_time=end_time,
         class_type=data.get("class_type"),
         level=data.get("level"),
-        price=360,
+        price=CLASS_PRICE,
         status="confirmed",
     )
 
@@ -970,38 +966,87 @@ def join_tournament(tournament_id):
     if not data.get("user_id"):
         return jsonify({"error": "user_id is required"}), 400
 
+    if not data.get("partner_id"):
+        return jsonify({"error": "partner_id is required"}), 400
+
+    user_id = int(data.get("user_id"))
+    partner_id = int(data.get("partner_id"))
+
+    if user_id == partner_id:
+        return jsonify({
+            "error": "No puedes inscribirte contigo mismo como pareja"
+        }), 400
+
     tournament = Tournament.query.get(tournament_id)
 
     if tournament is None:
         return jsonify({"error": "Tournament not found"}), 404
 
-    user = User.query.get(data.get("user_id"))
+    if tournament.status != "open":
+        return jsonify({"error": "Tournament is not open"}), 400
+
+    user = User.query.get(user_id)
 
     if user is None:
         return jsonify({"error": "User not found"}), 404
 
-    if len(tournament.registrations) >= tournament.max_players:
-        return jsonify({"error": "Tournament is full"}), 400
+    partner = User.query.get(partner_id)
 
-    existing_registration = TournamentRegistration.query.filter_by(
+    if partner is None:
+        return jsonify({"error": "Partner user not found"}), 404
+
+    current_registered = len(tournament.registrations)
+
+    if current_registered + 2 > tournament.max_players:
+        return jsonify({
+            "error": "No hay plazas suficientes para inscribir a la pareja"
+        }), 400
+
+    existing_user_registration = TournamentRegistration.query.filter_by(
         tournament_id=tournament_id,
-        user_id=data.get("user_id"),
+        user_id=user_id,
     ).first()
 
-    if existing_registration:
-        return jsonify({"error": "User already registered in this tournament"}), 400
+    if existing_user_registration:
+        return jsonify({
+            "error": "Ya estás inscrito en este torneo"
+        }), 400
 
-    registration = TournamentRegistration(
+    existing_partner_registration = TournamentRegistration.query.filter_by(
         tournament_id=tournament_id,
-        user_id=data.get("user_id"),
-        partner_name=data.get("partner_name"),
+        user_id=partner_id,
+    ).first()
+
+    if existing_partner_registration:
+        return jsonify({
+            "error": "Tu pareja ya está inscrita en este torneo"
+        }), 400
+
+    user_registration = TournamentRegistration(
+        tournament_id=tournament_id,
+        user_id=user_id,
+        partner_name=partner.name or partner.email,
         status="registered",
     )
 
-    db.session.add(registration)
+    partner_registration = TournamentRegistration(
+        tournament_id=tournament_id,
+        user_id=partner_id,
+        partner_name=user.name or user.email,
+        status="registered",
+    )
+
+    db.session.add(user_registration)
+    db.session.add(partner_registration)
     db.session.commit()
 
-    return jsonify(registration.serialize()), 201
+    return jsonify({
+        "message": "Pareja inscrita correctamente",
+        "players": [
+            user.serialize(),
+            partner.serialize(),
+        ],
+    }), 201
 
 
 # -------------------------
@@ -1153,7 +1198,9 @@ def upload_match_result():
     ]
 
     if len(player_ids) != len(set(player_ids)):
-        return jsonify({"error": "No puedes repetir jugadores en el mismo partido"}), 400
+        return jsonify({
+            "error": "No puedes repetir jugadores en el mismo partido"
+        }), 400
 
     players = User.query.filter(User.id.in_(player_ids)).all()
 
@@ -1184,10 +1231,14 @@ def upload_match_result():
 
     if team1_sets == 1 and team2_sets == 1:
         if data.get("set3_team1") is None or data.get("set3_team1") == "":
-            return jsonify({"error": "Se necesita Set 3 porque cada equipo ganó un set"}), 400
+            return jsonify({
+                "error": "Se necesita Set 3 porque cada equipo ganó un set"
+            }), 400
 
         if data.get("set3_team2") is None or data.get("set3_team2") == "":
-            return jsonify({"error": "Se necesita Set 3 porque cada equipo ganó un set"}), 400
+            return jsonify({
+                "error": "Se necesita Set 3 porque cada equipo ganó un set"
+            }), 400
 
         set3_team1 = int(data.get("set3_team1"))
         set3_team2 = int(data.get("set3_team2"))
